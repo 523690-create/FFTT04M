@@ -21,7 +21,7 @@ android {
 
     defaultConfig {
         applicationId = "com.example.FFTT04M"
-        minSdk = 23
+        minSdk = 32
         targetSdk = 36
         // Versioning starts at major 2 with a build timestamp: "2.<yyMMdd.HHmm>".
         // versionCode = whole minutes since the Unix epoch (monotonic, fits Int until ~2065).

@@ -1,0 +1,19 @@
+{
+    "permissions":  {
+                        "allow":  [
+                                      "Bash(gradlew *)",
+                                      "Bash(adb)",
+                                      "Bash(git log *)",
+                                      "Bash(git status)",
+                                      "Bash(git diff)",
+                                      "Bash(git branch)",
+                                      "Bash(git show)",
+                                      "Bash(git commit *)",
+                                      "Bash(git add *)",
+                                      "Bash(git checkout *)",
+                                      "Bash(Get-Date *)",
+                                      "Bash(Copy-Item *)",
+                                      "PowerShell"
+                                  ]
+                    }
+}

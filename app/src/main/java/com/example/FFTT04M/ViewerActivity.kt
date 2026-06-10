@@ -45,6 +45,7 @@ class ViewerActivity : AppCompatActivity() {
     private lateinit var blurSpinner: Spinner
     private lateinit var btnSweep: Button
     private var viewerProgress: android.widget.ProgressBar? = null
+    private var isCoughAnalysisShown = false
 
     // Busy indicator shown only when a procedure runs longer than 100 ms (so quick refreshes don't
     // flash a spinner). Reference-counted; every beginBusy() is paired with an endBusy() in a finally.
@@ -238,6 +239,7 @@ class ViewerActivity : AppCompatActivity() {
         }
         findViewById<Button>(R.id.btnViewerPlay)?.setOnClickListener { playAudio() }
         findViewById<Button>(R.id.btnViewerProcessed)?.setOnClickListener { playProcessedAudio() }
+        findViewById<Button>(R.id.btnViewerCoughAnalysis)?.setOnClickListener { toggleCoughAnalysis() }
 
         findViewById<Button?>(R.id.btnViewerNote)?.setOnClickListener { showCommentDialog() }
 
@@ -1989,9 +1991,17 @@ class ViewerActivity : AppCompatActivity() {
             } catch (e: Exception) {}
         }
         audioTrack = null
-        
+
         mediaPlayer?.release()
         mediaPlayer = null
+    }
+
+    private fun toggleCoughAnalysis() {
+        isCoughAnalysisShown = !isCoughAnalysisShown
+        val btn = findViewById<Button>(R.id.btnViewerCoughAnalysis)
+        btn?.setBackgroundColor(if (isCoughAnalysisShown) Color.parseColor("#FF6666") else Color.parseColor("#AA3333"))
+        viewerFft.setCoughAnalysisAlpha(if (isCoughAnalysisShown) 0.85f else 0f)
+        viewerFft.invalidate()
     }
 
     override fun onPause() {

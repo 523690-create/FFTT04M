@@ -74,6 +74,12 @@ class FFTHeatMapView @JvmOverloads constructor(
         postInvalidate()
     }
 
+    private var coughAnalysisAlpha = 0f
+
+    fun setCoughAnalysisAlpha(alpha: Float) {
+        coughAnalysisAlpha = alpha.coerceIn(0f, 1f)
+    }
+
     private var zoomFactorX = 1f
     private var zoomFactorY = 1f
     private var offsetX = 0f
