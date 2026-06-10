@@ -264,10 +264,12 @@ object GalleryTransfer {
             if (onBytes == null) {
                 input.copyTo(zip)
             } else {
-                // 8 KB (not 64 KB) chunks: each zip.write blocks at Bluetooth wire speed, so the chunk
-                // size IS the progress granularity. 8 KB gives ~8x smoother bar movement; the ~10 Hz
-                // throttle in buildBundle keeps the UI update rate sane at high throughput.
-                val buf = ByteArray(8 * 1024)
+                // 256 KB chunks: fewer write calls for better Bluetooth throughput. Note the per-clip
+                // bar can still jump, because recordings are small (≤~260 KB) and the OS socket
+                // send-buffer absorbs several whole files before the air link catches up — so the
+                // sender's byte count leads actual transmission. The speed readout next to ETA reflects
+                // real throughput. Truly tracking transmission would need receiver→sender ACKs.
+                val buf = ByteArray(256 * 1024)
                 while (true) {
                     val n = input.read(buf)
                     if (n < 0) break

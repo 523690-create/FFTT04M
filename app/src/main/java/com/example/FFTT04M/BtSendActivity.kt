@@ -8,6 +8,8 @@ import android.content.res.ColorStateList
 import android.graphics.Color
 import android.os.Build
 import android.os.Bundle
+import android.os.Handler
+import android.os.Looper
 import android.view.Gravity
 import android.view.View
 import android.view.ViewGroup
@@ -60,6 +62,21 @@ class BtSendActivity : AppCompatActivity() {
     @Volatile private var completedBytes = 0L
     @Volatile private var startTimeMs = 0L
     private var lastActiveBase: String? = null
+
+    // Smooth-progress extrapolation: real updates arrive in bursts (the OS Bluetooth socket buffer
+    // swallows several small clips at once), so between updates we glide the bars forward from the
+    // measured average throughput, then SNAP to the real value at each packet boundary. Prediction is
+    // capped to one clip ahead of confirmed progress so a burst-inflated rate can't overshoot.
+    private val tickHandler = Handler(Looper.getMainLooper())
+    @Volatile private var anchorDone = 0L       // real cumulative bytes at the last update
+    @Volatile private var anchorMs = 0L
+    @Volatile private var avgBpsPerSec = 0L     // overall average throughput (stable vs per-burst spikes)
+    @Volatile private var shownDone = 0L        // monotonic displayed cumulative bytes
+    @Volatile private var activeAnchorSent = 0L
+    @Volatile private var activeTotal = 0L
+    private val ticker = object : Runnable {
+        override fun run() { extrapolate(); if (transferring) tickHandler.postDelayed(this, 50) }
+    }
 
     private lateinit var status: TextView
     private lateinit var qr: ImageView
@@ -184,6 +201,27 @@ class BtSendActivity : AppCompatActivity() {
         overall.visibility = View.VISIBLE
         fileList.visibility = View.VISIBLE
         status.text = "Receiver connected — preparing…"
+        tickHandler.removeCallbacks(ticker)
+        tickHandler.post(ticker)
+    }
+
+    /** Glide the overall + active-clip bars forward from average throughput between real updates. */
+    private fun extrapolate() {
+        if (totalNewBytes <= 0 || avgBpsPerSec <= 0L) return
+        val ahead = avgBpsPerSec * (System.currentTimeMillis() - anchorMs) / 1000
+        val oneClip = if (totalNew > 0) totalNewBytes / totalNew else totalNewBytes
+        val cap = minOf((totalNewBytes * 0.997).toLong(), anchorDone + oneClip)   // ≤ 1 clip ahead of real
+        val pred = (anchorDone + ahead).coerceIn(anchorDone, cap)
+        if (pred > shownDone) {
+            shownDone = pred
+            overall.progress = ((shownDone.toDouble() / totalNewBytes) * 1000).toInt()
+        }
+        val base = lastActiveBase ?: return
+        if (activeTotal <= 0) return
+        val pos = rowIndex[base] ?: return
+        val vh = fileList.findViewHolderForLayoutPosition(pos) as? RowAdapter.VH ?: return
+        val predSent = (activeAnchorSent + ahead).coerceAtMost((activeTotal * 0.97).toLong())
+        vh.bar.progress = ((predSent.toDouble() / activeTotal) * 1000).toInt()
     }
 
     /** Receiver told us which base names it already has: categorize rows + compute the byte budget. */
@@ -201,7 +239,6 @@ class BtSendActivity : AppCompatActivity() {
         }
         totalNew = newCount
         totalNewBytes = newBytes
-        completedBytes = 0L
         allSent = newCount == 0           // comment-only sync still "succeeds"
         adapter?.notifyDataSetChanged()
         val already = rows.size - newCount
@@ -218,7 +255,6 @@ class BtSendActivity : AppCompatActivity() {
             rowIndex[prev]?.let { pi ->
                 val r = rows[pi]
                 if (r.cat != Cat.DONE) {
-                    completedBytes += r.total
                     r.sent = r.total
                     r.cat = Cat.DONE
                     adapter?.notifyItemChanged(pi)
@@ -237,13 +273,30 @@ class BtSendActivity : AppCompatActivity() {
 
         if (p.fileIndex >= p.fileTotal && p.totalBytes > 0 && p.sentBytes >= p.totalBytes) allSent = true
 
-        // Overall bar + ETA from the byte budget and current throughput.
-        val doneSoFar = completedBytes + p.sentBytes
-        val frac = if (totalNewBytes > 0) (doneSoFar.toDouble() / totalNewBytes).coerceIn(0.0, 1.0) else 0.0
-        overall.progress = (frac * 1000).toInt()
+        // Real (packet-boundary) update: compute doneSoFar directly from row states, not a fragile counter.
+        // Sum all DONE rows' full sizes + the current ACTIVE row's sentBytes.
+        var doneSoFar = 0L
+        for (j in rows.indices) {
+            val rr = rows[j]
+            doneSoFar += when (rr.cat) {
+                Cat.DONE -> rr.total
+                Cat.ACTIVE -> rr.sent
+                else -> 0L
+            }
+        }
+        anchorDone = doneSoFar
+        anchorMs = System.currentTimeMillis()
+        activeAnchorSent = p.sentBytes
+        activeTotal = p.totalBytes
+        // Overall average throughput — stable across the bursty per-clip rate; drives glide + ETA + readout.
+        val totalElapsed = (anchorMs - startTimeMs).coerceAtLeast(1L)
+        avgBpsPerSec = doneSoFar * 1000 / totalElapsed
+        shownDone = maxOf(shownDone, doneSoFar)
+        if (totalNewBytes > 0)
+            overall.progress = ((shownDone.toDouble() / totalNewBytes).coerceIn(0.0, 1.0) * 1000).toInt()
         val remainingBytes = (totalNewBytes - doneSoFar).coerceAtLeast(0L)
-        val etaSec = if (p.bytesPerSec > 0) (remainingBytes + p.bytesPerSec - 1) / p.bytesPerSec else 0L
-        status.text = "Sending ${p.fileIndex} / ${p.fileTotal}  •  ETA ${etaSec}s"
+        val etaSec = if (avgBpsPerSec > 0) (remainingBytes + avgBpsPerSec - 1) / avgBpsPerSec else 0L
+        status.text = "Sending ${p.fileIndex} / ${p.fileTotal}  •  ETA ${etaSec}s  •  ${kbPerSec(avgBpsPerSec)}"
     }
 
     private fun finishWithSuccess(n: Int) {
@@ -292,6 +345,7 @@ class BtSendActivity : AppCompatActivity() {
 
     override fun onDestroy() {
         super.onDestroy()
+        tickHandler.removeCallbacks(ticker)
         try { server?.close() } catch (_: Throwable) {}
     }
 
@@ -342,7 +396,7 @@ class BtSendActivity : AppCompatActivity() {
                 }
                 Cat.ACTIVE -> {
                     holder.name.setTextColor(Color.WHITE)
-                    holder.name.text = "${r.base}   —  ${kbPerSec(r.bps)}"
+                    holder.name.text = r.base   // throughput now shown next to ETA in the status line
                     holder.bar.visibility = View.VISIBLE
                     holder.bar.progress = if (r.total > 0) ((r.sent * 1000) / r.total).toInt() else 0
                 }
