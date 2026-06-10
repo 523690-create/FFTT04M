@@ -1,0 +1,83 @@
+{
+  "$schema": "http://json-schema.org/draft-07/schema#",
+  "title": "Cough segment (unified training record)",
+  "description": "One detected cough event. Emitted on-device by CoughSchemaJson and by dataset_builder.py; stored one-object-per-line in segments.jsonl.",
+  "type": "object",
+  "required": ["recording_id", "segment_id", "start_sample", "end_sample", "sample_rate_hz", "is_cough"],
+  "properties": {
+    "recording_id": { "type": "string" },
+    "segment_id": { "type": "string" },
+    "dataset": { "type": "string", "enum": ["coughvid", "icbhi", "coswara", "ondevice", "other"] },
+    "file_path": { "type": "string" },
+    "device_id": { "type": ["string", "null"] },
+    "start_sample": { "type": "integer", "minimum": 0 },
+    "end_sample": { "type": "integer", "minimum": 0 },
+    "sample_rate_hz": { "type": "integer" },
+    "is_cough": { "type": "boolean" },
+    "subject": {
+      "type": "object",
+      "properties": {
+        "subject_id": { "type": ["string", "null"] },
+        "age_years": { "type": ["number", "null"] },
+        "sex": { "type": "string", "enum": ["male", "female", "other", "unknown"] }
+      }
+    },
+    "qc": {
+      "type": "object",
+      "properties": {
+        "snr_db": { "type": "number" },
+        "speech_likelihood": { "type": "number" },
+        "spectral_flatness": { "type": "number" },
+        "pitch_strength": { "type": "number" },
+        "passed": { "type": "boolean" },
+        "flags": { "type": "array", "items": { "type": "string" } }
+      }
+    },
+    "features": {
+      "type": "object",
+      "properties": {
+        "fft": {
+          "type": "object",
+          "properties": {
+            "duration_s": { "type": "number" },
+            "q_ratio": { "type": "number" },
+            "fmax_hz": { "type": "number" }
+          }
+        },
+        "ridge": {
+          "type": "object",
+          "description": "The 300-1000 Hz parabolic squiggle f = a t^2 + b t + c.",
+          "properties": {
+            "valid": { "type": "boolean" },
+            "curvature_a": { "type": "number" },
+            "slope_b": { "type": "number" },
+            "intercept_c": { "type": "number" },
+            "center_freq_hz": { "type": "number" },
+            "frame_count": { "type": "integer" },
+            "energy": { "type": "number" },
+            "bandwidth_hz": { "type": "number" },
+            "r_squared": { "type": "number" }
+          }
+        },
+        "mfcc": {
+          "type": "object",
+          "properties": {
+            "frame_win_ms": { "type": "number" },
+            "frame_hop_ms": { "type": "number" },
+            "num_coeffs": { "type": "integer" }
+          }
+        }
+      }
+    },
+    "labels": {
+      "type": "object",
+      "properties": {
+        "native_label": { "type": "string" },
+        "diagnosis_4class": { "type": "string", "enum": ["bronchitis", "pneumonia", "croup", "habit_cough", "control", "other", "unknown"] },
+        "diagnosis_binary": { "type": "string", "enum": ["positive", "negative", "unknown"] },
+        "source": { "type": "string", "enum": ["clinician", "self_report", "dataset", "model", "consensus"] },
+        "confidence": { "type": "number" }
+      }
+    }
+  }
+}
