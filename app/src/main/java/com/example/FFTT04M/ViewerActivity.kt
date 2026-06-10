@@ -1997,11 +1997,13 @@ class ViewerActivity : AppCompatActivity() {
     }
 
     private fun toggleCoughAnalysis() {
-        isCoughAnalysisShown = !isCoughAnalysisShown
-        val btn = findViewById<Button>(R.id.btnViewerCoughAnalysis)
-        btn?.setBackgroundColor(if (isCoughAnalysisShown) Color.parseColor("#FF6666") else Color.parseColor("#AA3333"))
-        viewerFft.setCoughAnalysisAlpha(if (isCoughAnalysisShown) 0.85f else 0f)
-        viewerFft.invalidate()
+        filePath?.let { path ->
+            val intent = Intent(this, com.example.FFTT04M.cough.CoughAnalysisActivity::class.java)
+            intent.putExtra("filePath", path)
+            startActivity(intent)
+        } ?: run {
+            Toast.makeText(this, "No recording loaded", Toast.LENGTH_SHORT).show()
+        }
     }
 
     override fun onPause() {
