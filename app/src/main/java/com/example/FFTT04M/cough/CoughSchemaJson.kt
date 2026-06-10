@@ -53,6 +53,13 @@ object CoughSchemaJson {
             append("\"end_sample\": ").append(e.segment.endSample).append(", ")
             append("\"sample_rate_hz\": ").append(a.sampleRate).append(", ")
             append("\"is_cough\": ").append(s.isLikelyCough).append(", ")
+            e.phases?.let { p ->
+                append("\"phases\": {\"t1_s\": ").append(num(p.t1Sec))
+                append(", \"t2_s\": ").append(num(p.t2Sec))
+                append(", \"t3_expulsive_s\": ").append(num(p.t3Sec))
+                append(", \"expulsive_start_sample\": ").append(p.expulsiveStartSample)
+                append(", \"expulsive_end_sample\": ").append(p.expulsiveEndSample).append("}, ")
+            }
             append("\"qc\": {\"speech_likelihood\": ").append(num(s.speechLikelihood))
             append(", \"spectral_flatness\": ").append(num(s.spectralFlatness))
             append(", \"pitch_strength\": ").append(num(s.pitchStrength)).append("}, ")

@@ -133,7 +133,8 @@ class CoughAnalysisActivity : AppCompatActivity() {
             "ridge a=%.0f b=%.0f c=%.0f Hz  cf=%.0f  R²=%.2f".format(
                 Locale.US, r.curvature, r.slope, r.intercept, r.centerFreqHz, r.rSquared)
         else "ridge: none"
-        return "#${e.index + 1} [$tag] @ %.2fs  dur=%.0fms\n".format(Locale.US, e.segment.startSec, e.fft.durationSec * 1000) +
+        val phaseStr = e.phases?.let { "  T3(expulsive)=%.0fms".format(Locale.US, it.t3Sec * 1000) } ?: ""
+        return "#${e.index + 1} [$tag] @ %.2fs  dur=%.0fms$phaseStr\n".format(Locale.US, e.segment.startSec, e.fft.durationSec * 1000) +
             "Q=%.2f  Fmax=%.0fHz  flat=%.2f pitch=%.2f\n".format(Locale.US, e.fft.qRatio, e.fft.fmaxHz, e.speech.spectralFlatness, e.speech.pitchStrength) +
             ridgeStr
     }
