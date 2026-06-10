@@ -14,6 +14,7 @@ class CoughAnalyzer(private val cfg: CoughAnalysisConfig = CoughAnalysisConfig()
     private val ridgeExtractor = RidgeExtractor(cfg)
     private val speechRejector = SpeechRejector(cfg)
     private val phaseDetector = CoughPhases(cfg)
+    private val mfccExtractor = MfccExtractor()
 
     /** Analyse [x] at [sampleRate]; returns events with features (ridge points discarded). */
     fun analyze(x: FloatArray, sampleRate: Int): CoughAnalysis =
@@ -32,7 +33,8 @@ class CoughAnalyzer(private val cfg: CoughAnalysisConfig = CoughAnalysisConfig()
             val ridge = ridgeExtractor.extract(x, seg.startSample, seg.endSample, sampleRate)
             val speech = speechRejector.classify(x, seg.startSample, seg.endSample, sampleRate)
             val phases = phaseDetector.detect(x, seg.startSample, seg.endSample, sampleRate)
-            events.add(CoughEvent(i, seg, fft, ridge.features, speech, phases))
+            val mfcc = mfccExtractor.extract(x, seg.startSample, seg.endSample, sampleRate)
+            events.add(CoughEvent(i, seg, fft, ridge.features, speech, phases, mfcc))
             ridgePoints.add(ridge.points)
         }
         return CoughAnalysis(sampleRate, x.size, events) to ridgePoints

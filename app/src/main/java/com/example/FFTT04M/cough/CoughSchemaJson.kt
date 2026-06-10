@@ -77,7 +77,14 @@ object CoughSchemaJson {
             append(", \"frame_count\": ").append(r.frameCount)
             append(", \"energy\": ").append(num(r.energy))
             append(", \"bandwidth_hz\": ").append(num(r.bandwidthHz))
-            append(", \"r_squared\": ").append(num(r.rSquared)).append("}}, ")
+            append(", \"r_squared\": ").append(num(r.rSquared)).append("}")
+            e.mfcc?.let { mf ->
+                append(", \"mfcc\": {\"num_coeffs\": ").append(mf.numCoeffs)
+                append(", \"frame_count\": ").append(mf.frameCount)
+                append(", \"mean\": ").append(numArray(mf.mean))
+                append(", \"std\": ").append(numArray(mf.std)).append("}")
+            }
+            append("}, ")
             append("\"labels\": {\"diagnosis_4class\": \"unknown\", \"source\": \"model\"}")
             append('}')
         }
@@ -92,6 +99,8 @@ object CoughSchemaJson {
         // Trim trailing zeros but keep at least one decimal digit.
         return s.trimEnd('0').let { if (it.endsWith('.')) it + "0" else it }
     }
+
+    private fun numArray(v: DoubleArray): String = v.joinToString(prefix = "[", postfix = "]") { num(it) }
 
     private fun str(s: String): String = "\"" + s.replace("\\", "\\\\").replace("\"", "\\\"") + "\""
     private fun nullableStr(s: String?): String = if (s == null) "null" else str(s)

@@ -72,6 +72,7 @@ data class CoughEvent(
     val ridge: RidgeFeatures,
     val speech: SpeechVerdict,
     val phases: PhaseFeatures? = null,
+    val mfcc: MfccFeatures? = null,
 ) {
     /**
      * Compact, comparable feature vector for clustering / distance:
