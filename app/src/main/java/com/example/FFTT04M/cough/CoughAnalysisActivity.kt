@@ -100,13 +100,19 @@ class CoughAnalysisActivity : AppCompatActivity() {
             })
             return
         }
+        // Standardized feature space → each cough's nearest twin (the email's "comparable data point").
+        val z = CoughSimilarity.standardize(a.events.map { it.featureVector() }).vectors
         a.events.forEachIndexed { i, e ->
+            val nnText = if (a.events.size > 1) {
+                val (nn, dist) = CoughSimilarity.nearestNeighbor(i, z)
+                if (nn >= 0) "\n≈ closest: #${nn + 1}  (d=%.2f)".format(Locale.US, dist) else ""
+            } else ""
             val row = TextView(this).apply {
                 textSize = 13f
                 setPadding(dp(16), dp(10), dp(16), dp(10))
                 setTextColor(Color.WHITE)
                 setBackgroundColor(if (e.speech.isLikelyCough) Color.parseColor("#1B3A1B") else Color.parseColor("#3A1B1B"))
-                text = rowSummary(e)
+                text = rowSummary(e) + nnText
                 setOnClickListener { showRidge(i) }
             }
             rowsContainer.addView(row)
