@@ -46,6 +46,13 @@ Pure DSP (no Android deps beyond `FloatArray`), reusing the project's `FFTUtils`
 - **CoughSchemaJson** — serializes to the unified `segments.jsonl` training schema (hand-rolled,
   dependency-free, unit-tested).
 
+- **CoughPhases** — T1 (inspiratory) / T2 (compressive) / T3 (expulsive) split + the expulsive
+  window (the 150–200 ms the literature finds most diagnostic).
+- **MfccExtractor** — Tier-2 feature: mel filterbank → log → DCT-II, summarized as mean ± std per
+  cough (the input the TDNN / logistic-regression models consume).
+- **CoughSimilarity** — turns each cough's feature vector into a comparable data point: z-score
+  standardization, Euclidean / cosine distance, nearest-neighbour, and single-link clustering
+  ("which coughs look alike").
 - **CoughDetector** — streaming, hands-free auto-capture. Block-wise RMS with an adaptive noise
   floor → onset (with pre-roll so the attack isn't clipped) → end after a hangover or max-duration →
   duration gate on the above-threshold span → the same FFT/ridge/speech features. Emits only
@@ -64,6 +71,21 @@ Download/preprocess for COUGHVID + ICBHI + Coswara, the unified JSON schema, ICB
 4-class label mapping (bronchitis / pneumonia / croup / habit-cough), and TDNN4 / EAT4 PyTorch
 model scaffolds. Croup + habit-cough have no public data — a collection protocol is documented.
 
-## Status
-See git log on `blue_sky`. Engine + tests land first (offline-testable via `gradlew test`), then
-UI, then the research scaffold.
+## Status (blue_sky)
+
+Done and pushed (26 unit tests, all green via `gradlew :app:testDebugUnitTest`; full APK builds):
+
+- ✅ Classical DSP engine: segmentation, FFT features (Q-ratio/Fmax/duration), ridge parabola fit.
+- ✅ Phase segmentation (T1/T2/T3 + expulsive window).
+- ✅ MFCC (Tier-2 features) + dependency-free unified-schema JSON export.
+- ✅ Cough similarity (standardized distance, nearest-neighbour, clustering).
+- ✅ Auto-capture: streaming detector + live mic capture UI (speech rejected, coughs auto-saved).
+- ✅ Analysis UI: per-cough features, ridge plot, nearest-twin, JSON export.
+- ✅ Research scaffold: schema, label mapping, download/preprocess, features.py (mirrors Kotlin),
+     TDNN4 / EAT4 model scaffolds.
+
+Entry points: Listen → long-press GALLERY = auto-capture; Gallery → long-press a recording =
+Cough Analysis.
+
+Not yet done (future): wire a trained Tier-2 model for on-device inference; the "modern edition"
+capability bumps (96 kHz, FFT 8192, FLAC); real cough datasets to validate thresholds.
