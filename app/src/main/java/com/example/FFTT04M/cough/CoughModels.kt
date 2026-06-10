@@ -117,4 +117,13 @@ data class CoughAnalysisConfig(
     // Speech rejection
     val speechFlatnessThreshold: Double = 0.18,
     val speechPitchThreshold: Double = 0.55,
+    // Real-time auto-capture (CoughDetector)
+    /** Audio kept before the onset crossing, so the cough's attack isn't clipped. */
+    val preRollMs: Double = 80.0,
+    /** Sub-threshold silence needed to declare the event over (also bridges intra-cough gaps). */
+    val hangoverMs: Double = 150.0,
+    /** EMA factor for the adaptive noise floor (updated only while idle). */
+    val noiseFloorAlpha: Double = 0.97,
+    /** Absolute RMS gate so pure-silence rooms don't trigger on the relative threshold alone. */
+    val detectAbsFloor: Double = 0.004,
 )

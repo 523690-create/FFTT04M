@@ -129,8 +129,13 @@ class MainActivity : AppCompatActivity() {
 
         btnLatency?.setOnClickListener { runLatencyMeasurement() }
 
-        findViewById<Button>(R.id.btnGallery).setOnClickListener {
-            startActivity(Intent(this, GalleryActivity::class.java))
+        findViewById<Button>(R.id.btnGallery).apply {
+            setOnClickListener { startActivity(Intent(this@MainActivity, GalleryActivity::class.java)) }
+            // Long-press the Gallery button → hands-free cough auto-capture (blue_sky expansion).
+            setOnLongClickListener {
+                startActivity(Intent(this@MainActivity, com.example.FFTT04M.cough.CoughCaptureActivity::class.java))
+                true
+            }
         }
 
         findViewById<Button>(R.id.btnQuitTop).setOnClickListener {

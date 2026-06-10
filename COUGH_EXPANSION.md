@@ -46,9 +46,18 @@ Pure DSP (no Android deps beyond `FloatArray`), reusing the project's `FFTUtils`
 - **CoughSchemaJson** — serializes to the unified `segments.jsonl` training schema (hand-rolled,
   dependency-free, unit-tested).
 
-### UI
+- **CoughDetector** — streaming, hands-free auto-capture. Block-wise RMS with an adaptive noise
+  floor → onset (with pre-roll so the attack isn't clipped) → end after a hangover or max-duration →
+  duration gate on the above-threshold span → the same FFT/ridge/speech features. Emits only
+  speech-passed coughs. Tested against synthetic streams fed in irregular chunks.
+
+### UI / entry points
 - **CoughAnalysisActivity** — load a recording, run the analyzer, list detected coughs with their
   features and a ridge overlay; export the JSON schema for training.
+  Entry: **Gallery → long-press a recording → "Cough Analysis"**.
+- **CoughCaptureActivity** — live auto-capture: listens on the mic, runs `CoughDetector`, and
+  auto-saves each detected cough as a Gallery-compatible WAV (`cough_<timestamp>.wav`), ignoring
+  speech. Entry: **Listen screen → long-press the GALLERY button**.
 
 ## Off-device ML scaffold — `research/cough/`
 Download/preprocess for COUGHVID + ICBHI + Coswara, the unified JSON schema, ICBHI/COUGHVID →
