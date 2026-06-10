@@ -413,7 +413,17 @@ class GalleryActivity : AppCompatActivity() {
             }
 
             holder.itemView.setOnLongClickListener {
-                showDeleteDialog(file, position)
+                AlertDialog.Builder(this@GalleryActivity)
+                    .setTitle(file.nameWithoutExtension)
+                    .setItems(arrayOf("Cough Analysis", "Delete")) { _, which ->
+                        when (which) {
+                            0 -> startActivity(Intent(this@GalleryActivity,
+                                com.example.FFTT04M.cough.CoughAnalysisActivity::class.java)
+                                .putExtra("FILE_PATH", file.absolutePath))
+                            1 -> showDeleteDialog(file, position)
+                        }
+                    }
+                    .show()
                 true
             }
         }
