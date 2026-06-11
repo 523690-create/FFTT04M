@@ -1999,7 +1999,7 @@ class ViewerActivity : AppCompatActivity() {
     private fun toggleCoughAnalysis() {
         filePath?.let { path ->
             val intent = Intent(this, com.example.FFTT04M.cough.CoughAnalysisActivity::class.java)
-            intent.putExtra("filePath", path)
+            intent.putExtra("FILE_PATH", path)
             startActivity(intent)
         } ?: run {
             Toast.makeText(this, "No recording loaded", Toast.LENGTH_SHORT).show()
