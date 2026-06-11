@@ -207,7 +207,8 @@ class GalleryActivity : AppCompatActivity() {
             "Receive (scan QR)",
             "Send via Wi-Fi QR",
             "Export / share to file…",
-            "Import from file…"
+            "Import from file…",
+            "USB Upload (to desktop)"
         )
         AlertDialog.Builder(this)
             .setTitle("Share gallery")
@@ -228,10 +229,44 @@ class GalleryActivity : AppCompatActivity() {
                     else startActivity(Intent(this, ExportActivity::class.java))
                     4 -> exportToFile()
                     5 -> importFileLauncher.launch("*/*")
+                    6 -> prepareUsbUpload()
                 }
             }
             .setNegativeButton("Cancel", null)
             .show()
+    }
+
+    /** Stage all recordings + fresh metadata sidecars where a USB-connected desktop can reach them,
+     *  then show the on-device path + instructions. The desktop (FFTT04D Cough Analyzer → "Load USB
+     *  Device") does the actual adb pull; over USB the device can't push to the PC itself. */
+    private fun prepareUsbUpload() {
+        val wavs = GalleryTransfer.recordingWavs(this)
+        if (wavs.isEmpty()) {
+            Toast.makeText(this, "No recordings to upload", Toast.LENGTH_SHORT).show()
+            return
+        }
+        Toast.makeText(this, "Preparing ${wavs.size} recordings…", Toast.LENGTH_SHORT).show()
+        thread {
+            // Move into public storage when permitted, and refresh each <base>.json metadata sidecar.
+            GalleryTransfer.migrateToPublicIfNeeded(this)
+            wavs.forEach { GalleryTransfer.writeMetaSidecar(this, it.nameWithoutExtension) }
+            val dir = GalleryTransfer.recordingsDir(this)?.absolutePath ?: "(unavailable)"
+            val isPublic = GalleryTransfer.hasPublicStorageAccess(this)
+            runOnUiThread {
+                val msg = buildString {
+                    append("${wavs.size} recordings + metadata are ready for USB upload.\n\n")
+                    append("On-device folder:\n$dir\n\n")
+                    append("Next: connect this phone to the computer by USB (enable USB debugging), ")
+                    append("then in the desktop FFTT04D Cough Analyzer click \"Load USB Device\".")
+                    if (!isPublic) append("\n\nTip: grant \"All files access\" so the desktop can read them reliably.")
+                }
+                AlertDialog.Builder(this)
+                    .setTitle("USB Upload")
+                    .setMessage(msg)
+                    .setPositiveButton("OK", null)
+                    .show()
+            }
+        }
     }
 
     /** Build a .fftt bundle and hand it to the system share sheet (Quick Share / Bluetooth / email /
