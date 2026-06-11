@@ -208,7 +208,7 @@ class GalleryActivity : AppCompatActivity() {
             "Send via Wi-Fi QR",
             "Export / share to file…",
             "Import from file…",
-            "USB Upload (to desktop)"
+            "Offer recordings to desktop (USB)"
         )
         AlertDialog.Builder(this)
             .setTitle("Share gallery")
@@ -229,20 +229,20 @@ class GalleryActivity : AppCompatActivity() {
                     else startActivity(Intent(this, ExportActivity::class.java))
                     4 -> exportToFile()
                     5 -> importFileLauncher.launch("*/*")
-                    6 -> prepareUsbUpload()
+                    6 -> offerToDesktop()
                 }
             }
             .setNegativeButton("Cancel", null)
             .show()
     }
 
-    /** Stage all recordings + fresh metadata sidecars where a USB-connected desktop can reach them,
-     *  then show the on-device path + instructions. The desktop (FFTT04D Cough Analyzer → "Load USB
-     *  Device") does the actual adb pull; over USB the device can't push to the PC itself. */
-    private fun prepareUsbUpload() {
+    /** Cooperative USB handshake: stage recordings + metadata, publish an "offer" manifest the
+     *  desktop reads, then wait for the desktop's "ack" (written back via adb) and confirm receipt.
+     *  Bulk data flows phone→desktop (adb is host-initiated); the manifests carry the signalling. */
+    private fun offerToDesktop() {
         val wavs = GalleryTransfer.recordingWavs(this)
         if (wavs.isEmpty()) {
-            Toast.makeText(this, "No recordings to upload", Toast.LENGTH_SHORT).show()
+            Toast.makeText(this, "No recordings to offer", Toast.LENGTH_SHORT).show()
             return
         }
         Toast.makeText(this, "Preparing ${wavs.size} recordings…", Toast.LENGTH_SHORT).show()
@@ -250,21 +250,52 @@ class GalleryActivity : AppCompatActivity() {
             // Move into public storage when permitted, and refresh each <base>.json metadata sidecar.
             GalleryTransfer.migrateToPublicIfNeeded(this)
             wavs.forEach { GalleryTransfer.writeMetaSidecar(this, it.nameWithoutExtension) }
-            val dir = GalleryTransfer.recordingsDir(this)?.absolutePath ?: "(unavailable)"
+            val dir = GalleryTransfer.recordingsDir(this)
+            val ackFile = dir?.let { java.io.File(it, "fftt_usb_ack.json") }
+            ackFile?.delete()   // clear any stale ack from a previous transfer
+
+            // Publish the offer manifest the desktop's "Request from USB Device" reads.
+            val manifest = org.json.JSONObject().apply {
+                put("type", "fftt_usb_offer"); put("status", "offering")
+                put("device_model", android.os.Build.MODEL); put("app", packageName)
+                put("count", wavs.size); put("created_ms", System.currentTimeMillis())
+                put("recordings", org.json.JSONArray().apply { wavs.forEach { put(it.nameWithoutExtension) } })
+            }
+            dir?.let { runCatching { java.io.File(it, "fftt_usb_offer.json").writeText(manifest.toString()) } }
+
+            val path = dir?.absolutePath ?: "(unavailable)"
             val isPublic = GalleryTransfer.hasPublicStorageAccess(this)
             runOnUiThread {
-                val msg = buildString {
-                    append("${wavs.size} recordings + metadata are ready for USB upload.\n\n")
-                    append("On-device folder:\n$dir\n\n")
-                    append("Next: connect this phone to the computer by USB (enable USB debugging), ")
-                    append("then in the desktop FFTT04D Cough Analyzer click \"Load USB Device\".")
-                    if (!isPublic) append("\n\nTip: grant \"All files access\" so the desktop can read them reliably.")
+                val msgView = android.widget.TextView(this).apply {
+                    setPadding(56, 36, 56, 8); textSize = 14f
+                    text = buildString {
+                        append("Offering ${wavs.size} recordings + metadata to the desktop.\n\n")
+                        append("On the computer, open the FFTT04D Cough Analyzer and click \"Request from USB Device\".\n\n")
+                        append("Folder: $path")
+                        if (!isPublic) append("\n\nTip: grant \"All files access\" for reliable USB reads.")
+                        append("\n\n⏳ Waiting for the desktop to receive…")
+                    }
                 }
-                AlertDialog.Builder(this)
-                    .setTitle("USB Upload")
-                    .setMessage(msg)
-                    .setPositiveButton("OK", null)
-                    .show()
+                AlertDialog.Builder(this).setTitle("USB Offer").setView(msgView)
+                    .setPositiveButton("Done", null).show()
+
+                // Poll for the desktop's ack (written beside the offer via adb push) for up to 2 min.
+                thread {
+                    val deadline = System.currentTimeMillis() + 120_000
+                    while (System.currentTimeMillis() < deadline && !isFinishing) {
+                        if (ackFile?.isFile == true) {
+                            val n = runCatching {
+                                org.json.JSONObject(ackFile.readText()).optInt("received_count", wavs.size)
+                            }.getOrDefault(wavs.size)
+                            runOnUiThread {
+                                if (!isFinishing) msgView.text =
+                                    "✓ Desktop received $n recording(s).\n\nFolder: $path"
+                            }
+                            break
+                        }
+                        try { Thread.sleep(1500) } catch (e: InterruptedException) { break }
+                    }
+                }
             }
         }
     }
