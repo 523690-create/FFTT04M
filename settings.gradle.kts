@@ -25,4 +25,3 @@ dependencyResolutionManagement {
 rootProject.name = "FFTT04M"
 include(":app")
 include(":shared")
-include(":desktop")
