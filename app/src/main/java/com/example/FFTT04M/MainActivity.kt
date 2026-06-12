@@ -104,6 +104,7 @@ class MainActivity : AppCompatActivity() {
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
         setContentView(R.layout.activity_main)
+        findViewById<android.widget.TextView>(R.id.titleHeading)?.setVersionRoundelStart()
 
         prefs = getSharedPreferences("app_settings", MODE_PRIVATE)
 

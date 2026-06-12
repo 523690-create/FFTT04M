@@ -171,6 +171,7 @@ class GalleryActivity : AppCompatActivity() {
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
         setContentView(R.layout.activity_gallery)
+        findViewById<android.widget.TextView>(R.id.titleHeading)?.setVersionRoundelStart()
 
         val prefs = getSharedPreferences("app_settings", MODE_PRIVATE)
         isGridView = prefs.getBoolean("gallery_is_grid", false)

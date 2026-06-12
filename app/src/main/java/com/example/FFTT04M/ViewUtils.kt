@@ -175,6 +175,20 @@ fun TextView.setMaxTextSizeToFit(
 fun uiScale(res: android.content.res.Resources): Float =
     (res.configuration.smallestScreenWidthDp / 411f).coerceIn(1.0f, 2.2f)
 
+/**
+ * Place the launcher-icon roundel — magenta ring, cyan centre, and the current build's magenta
+ * version letter (`@drawable/ic_launcher_foreground`) — just left of this heading's text, on the
+ * same line. Sized in dp and drawn to those bounds, so it stays a small badge despite the icon's
+ * 108dp source. The letter colour matches the launcher icon because this IS the launcher foreground.
+ */
+fun TextView.setVersionRoundelStart(sizeDp: Float = 26f, padDp: Float = 8f) {
+    val d = ContextCompat.getDrawable(context, R.drawable.ic_launcher_foreground) ?: return
+    val px = (resources.displayMetrics.density * sizeDp).toInt()
+    d.setBounds(0, 0, px, px)
+    setCompoundDrawablesRelative(d, null, null, null)
+    compoundDrawablePadding = (resources.displayMetrics.density * padDp).toInt()
+}
+
 /** Blend [color] toward white by [fraction] (0 = unchanged, 1 = white). */
 fun lightenColor(color: Int, fraction: Float): Int {
     val r = (Color.red(color) + (255 - Color.red(color)) * fraction).toInt().coerceIn(0, 255)
