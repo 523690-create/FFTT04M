@@ -75,6 +75,9 @@ class MainActivity : AppCompatActivity() {
     private var audioRecord: AudioRecord? = null
     private var recordingThread: Thread? = null
     private var sampleRate = 44100
+    // Hands-free cough auto-capture on the Listen screen (forest-verdict CoughDetector on the live mic).
+    private var coughDetector: com.example.FFTT04M.cough.CoughDetector? = null
+    private var autoCoughCount = 0
     private val fftSize = 2048
     private val stepSize = 1024
     
@@ -753,6 +756,8 @@ class MainActivity : AppCompatActivity() {
         
         audioRecord = record
         recording.set(true)
+        // Auto-detect + auto-save coughs from the live mic (forest verdict via CoughClassifier).
+        coughDetector = com.example.FFTT04M.cough.CoughDetector(sampleRate) { onAutoCough(it) }
         record.startRecording()
 
         recordingThread = Thread {
@@ -780,6 +785,9 @@ class MainActivity : AppCompatActivity() {
                         audioCircularBuffer[audioWriteIndex] = audioBuffer[i]
                         audioWriteIndex = (audioWriteIndex + 1) % audioBufferSize
                     }
+
+                    // Feed the RAW mic (pre-EQ) to the hands-free cough detector.
+                    coughDetector?.process(if (read == audioBuffer.size) audioBuffer.copyOf() else audioBuffer.copyOf(read))
 
                     // EQ affects only the waterfall: run the biquads on the samples fed to the FFT.
                     // (Run on every sample to keep the IIR state continuous.)
@@ -829,9 +837,38 @@ class MainActivity : AppCompatActivity() {
         recordingThread?.start()
     }
 
+    /** Auto-saved cough from the live mic: write a Gallery WAV and flash an on-screen confirmation. */
+    private fun onAutoCough(c: com.example.FFTT04M.cough.CoughDetector.CapturedCough) {
+        val ts = java.text.SimpleDateFormat("yyyyMMdd_HHmmss_SSS", java.util.Locale.US).format(java.util.Date())
+        val dir = GalleryTransfer.recordingsDir(this) ?: filesDir
+        val file = java.io.File(dir, "cough_$ts.wav")
+        runCatching { com.example.FFTT04M.cough.CoughWav.write(file, c.pcm, sampleRate) }
+        autoCoughCount++
+        runOnUiThread { flashCoughSaved(autoCoughCount) }
+    }
+
+    /** Brief centred green "✓ cough saved (N)" overlay that fades out. */
+    private fun flashCoughSaved(n: Int) {
+        val root = findViewById<android.view.ViewGroup>(android.R.id.content) ?: return
+        val tv = android.widget.TextView(this).apply {
+            text = "✓ cough saved  ($n)"
+            setTextColor(0xFFFFFFFF.toInt()); setBackgroundColor(0xE0177245.toInt())
+            textSize = 22f; gravity = android.view.Gravity.CENTER
+            val p = (18 * resources.displayMetrics.density).toInt(); setPadding(p, p / 2, p, p / 2)
+        }
+        root.addView(tv, android.widget.FrameLayout.LayoutParams(
+            android.widget.FrameLayout.LayoutParams.WRAP_CONTENT,
+            android.widget.FrameLayout.LayoutParams.WRAP_CONTENT, android.view.Gravity.CENTER))
+        tv.alpha = 0f
+        tv.animate().alpha(1f).setDuration(120).withEndAction {
+            tv.animate().alpha(0f).setStartDelay(850).setDuration(450).withEndAction { root.removeView(tv) }
+        }
+    }
+
     private fun stopRecording() {
         recording.set(false)
         recordingThread?.join()
+        coughDetector?.finish(); coughDetector = null
         audioRecord?.stop()
         audioRecord?.release()
         audioRecord = null
