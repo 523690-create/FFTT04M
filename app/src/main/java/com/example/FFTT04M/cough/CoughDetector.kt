@@ -109,7 +109,11 @@ class CoughDetector(
         if (coreMs < cfg.minDurationMs || coreMs > cfg.maxDurationMs) return
 
         val speech = speechRejector.classify(pcm, 0, pcm.size, sampleRate)
-        if (!speech.isLikelyCough) return            // speech rejection
+        // Verdict: the trained cough forest (WholeClipFeatures → CoughForest, ~91% sens / 83% spec on
+        // ALLDATA) when its model is bundled; otherwise fall back to the old speech-rejection heuristic.
+        val passes = if (CoughClassifier.available()) CoughClassifier.isCough(pcm, sampleRate)
+                     else speech.isLikelyCough
+        if (!passes) return
         val fft = fftExtractor.extract(pcm, 0, pcm.size, sampleRate)
         val ridge = ridgeExtractor.extract(pcm, 0, pcm.size, sampleRate).features
         onCough(CapturedCough(pcm, eventStartGlobal, fft, ridge, speech))
