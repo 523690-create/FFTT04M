@@ -837,13 +837,25 @@ class MainActivity : AppCompatActivity() {
         recordingThread?.start()
     }
 
-    /** Auto-saved cough from the live mic: write a Gallery WAV and flash an on-screen confirmation. */
+    /**
+     * Auto-saved cough from the live mic: draw white borders around it in the scrolling display,
+     * use the between-borders spectrogram as the recording's default icon, write the Gallery WAV,
+     * and flash an on-screen confirmation.
+     */
     private fun onAutoCough(c: com.example.FFTT04M.cough.CoughDetector.CapturedCough) {
         val ts = java.text.SimpleDateFormat("yyyyMMdd_HHmmss_SSS", java.util.Locale.US).format(java.util.Date())
         val dir = GalleryTransfer.recordingsDir(this) ?: filesDir
-        val file = java.io.File(dir, "cough_$ts.wav")
-        runCatching { com.example.FFTT04M.cough.CoughWav.write(file, c.pcm, sampleRate) }
+        val wav = java.io.File(dir, "cough_$ts.wav")
+        val png = java.io.File(dir, "cough_$ts.png")
+        // Borders + thumbnail of the captured cough (snapshot now, before it scrolls off-screen).
+        val icon = fftHeatMap.markCoughAndSnapshot(c.pcm.size / stepSize)
         autoCoughCount++
+        kotlin.concurrent.thread {                       // file I/O off the audio thread
+            runCatching { com.example.FFTT04M.cough.CoughWav.write(wav, c.pcm, sampleRate) }
+            icon?.let { bmp -> runCatching {
+                java.io.FileOutputStream(png).use { bmp.compress(android.graphics.Bitmap.CompressFormat.PNG, 100, it) }
+            } }
+        }
         runOnUiThread { flashCoughSaved(autoCoughCount) }
     }
 
