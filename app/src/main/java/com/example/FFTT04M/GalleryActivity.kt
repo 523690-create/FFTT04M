@@ -171,7 +171,10 @@ class GalleryActivity : AppCompatActivity() {
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
         setContentView(R.layout.activity_gallery)
-        findViewById<android.widget.TextView>(R.id.titleHeading)?.setVersionRoundelStart()
+        // Roundel only in LANDSCAPE here — in narrow portrait it pushes "GALLERY" onto two lines on
+        // small devices (Pixel 3a, J7). Listen keeps it in both orientations.
+        if (resources.configuration.orientation == android.content.res.Configuration.ORIENTATION_LANDSCAPE)
+            findViewById<android.widget.TextView>(R.id.titleHeading)?.setVersionRoundelStart()
 
         val prefs = getSharedPreferences("app_settings", MODE_PRIVATE)
         isGridView = prefs.getBoolean("gallery_is_grid", false)
