@@ -2,7 +2,27 @@
 
 Read this file first, then continue the work. This captures context that is NOT in the
 codebase or the other .md files — it lives only in the chat session that produced it.
-Date: 2026-06-05.
+Date: 2026-06-12 (latest session below; older 2026-06-05 notes follow).
+
+## SESSION 2026-06-12 — cough detector, Listen-screen auto-capture, launcher roundel
+- **New cough/not-cough detector**: ported `WholeClipFeatures` + `CoughForest` + `CoughClassifier`
+  (+ bundled `cough_forest.txt.gz`, ~2.1 MB) into `cough/`. The trained random forest (AUC 0.92,
+  ~91 % sens / 83 % spec on the desktop ALLDATA corpus; cough vs speech/crying/non-human, with
+  sneezing/breathing/snoring as "don't care") replaces the old low-specificity `SpeechRejector` verdict.
+  `CoughDetector.endEvent` now uses `CoughClassifier.isCough(pcm, sr)` (falls back to the old verdict if
+  the model is absent); the streaming noise-floor onset capture is unchanged. FFT is byte-identical to
+  the desktop via the shared module, so the model applies directly. (Detector study + taxonomy live in
+  the FFTT04D memory `cough-detection-redesign`.)
+- **Hands-free auto-capture on the Listen screen** (`MainActivity`): the live mic (pre-EQ) is fed to
+  `CoughDetector`; each detected cough is auto-saved as a Gallery WAV (`cough_<ts>.wav`), with **white
+  vertical borders** drawn into the scrolling spectrogram at its start/end columns and the
+  **between-borders region saved as the recording's 256×256 `.png` icon**
+  (`FFTHeatMapView.markCoughAndSnapshot`), plus a centred green "✓ cough saved (N)" flash. File I/O runs
+  off the audio thread. (The long-press-Gallery `CoughCaptureActivity` still exists as a dedicated screen.)
+- **Launcher-icon roundel** on the FFT Listening / GALLERY titles (portrait + landscape): a sized
+  `drawableStart` of `@drawable/ic_launcher_foreground` (the round magenta-letter icon) via
+  `ViewUtils.setVersionRoundelStart()` — uses the app's own per-build icon, so colours track the build.
+- Deployed to the Pixels (Tier-1 fleet). The J7 / legacy devices run the FFTT04L variant.
 
 - ✅ **Gallery Transfer Comment Sync Fix** (`HEAD`): Fixed a logic error in `GalleryTransfer.importBundle()` where `.txt` and `.png` files were skipped on modern devices if the audio recording was already present. Now, critical metadata (comments/thumbnails) always syncs, ensuring that edits made after a prior transfer are propagated correctly.
 
