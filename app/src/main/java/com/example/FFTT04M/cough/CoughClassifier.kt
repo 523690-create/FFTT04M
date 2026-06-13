@@ -9,12 +9,21 @@ package com.example.FFTT04M.cough
 object CoughClassifier {
     private val forest by lazy { CoughForest.loadBundled() }
 
+    /** Override the model's built-in decision threshold to move along the ROC (null = model default).
+     *  Lower → more sensitive, higher → more specific. */
+    @Volatile var thresholdOverride: Double? = null
+
     fun available(): Boolean = forest != null
+
+    /** Effective decision threshold (override if set, else the model's bundled value). */
+    fun threshold(): Double = thresholdOverride ?: (forest?.threshold ?: 0.5)
 
     /** Cough probability for a whole clip (or candidate window), or -1 if the model is missing. */
     fun coughProb(pcm: FloatArray, sampleRate: Int): Double =
         forest?.coughProb(WholeClipFeatures.extract(pcm, sampleRate)) ?: -1.0
 
-    fun isCough(pcm: FloatArray, sampleRate: Int): Boolean =
-        forest?.let { it.isCough(WholeClipFeatures.extract(pcm, sampleRate)) } ?: false
+    fun isCough(pcm: FloatArray, sampleRate: Int): Boolean {
+        val p = coughProb(pcm, sampleRate)
+        return p >= 0.0 && p >= threshold()
+    }
 }
