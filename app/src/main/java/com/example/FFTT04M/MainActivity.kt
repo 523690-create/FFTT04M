@@ -756,6 +756,10 @@ class MainActivity : AppCompatActivity() {
         
         audioRecord = record
         recording.set(true)
+        // STOPGAP specificity for noisy real-world audio (movie speech/music) until the forest is
+        // retrained with those as hard negatives. Higher threshold = fewer false captures (model
+        // default is 0.48). Remove/lower once the retrained model ships.
+        com.example.FFTT04M.cough.CoughClassifier.thresholdOverride = 0.65
         // Auto-detect + auto-save coughs from the live mic (forest verdict via CoughClassifier).
         coughDetector = com.example.FFTT04M.cough.CoughDetector(sampleRate) { onAutoCough(it) }
         record.startRecording()
