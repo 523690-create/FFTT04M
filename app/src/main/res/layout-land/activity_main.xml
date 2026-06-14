@@ -59,6 +59,18 @@
                 android:textSize="10sp"
                 android:textStyle="bold"
                 style="@style/Widget.MaterialComponents.Button.UnelevatedButton" />
+            <!-- Background cough-capture toggle (also in portrait). -->
+            <Button
+                android:id="@+id/btnBackground"
+                android:layout_width="0dp"
+                android:layout_height="40dp"
+                android:layout_weight="1"
+                android:text="@string/btn_background"
+                android:backgroundTint="#444444"
+                android:textColor="#FFFFFF"
+                android:textSize="10sp"
+                android:textStyle="bold"
+                style="@style/Widget.MaterialComponents.Button.UnelevatedButton" />
         </LinearLayout>
 
         <FrameLayout

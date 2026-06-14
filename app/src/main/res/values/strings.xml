@@ -16,6 +16,7 @@
     <string name="btn_latency">Latency</string>
     <string name="btn_gallery">GALLERY</string>
     <string name="btn_quit">QUIT</string>
+    <string name="btn_background">BACKGROUND</string>
     <string name="btn_play">PLAY</string>
     <string name="btn_wave">WAVELET</string>
     <string name="btn_filter">FILTER</string>

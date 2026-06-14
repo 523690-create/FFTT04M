@@ -142,6 +142,24 @@ class MainActivity : AppCompatActivity() {
             }
         }
 
+        // BACKGROUND: toggle always-on hands-free cough auto-capture (foreground mic service; keeps
+        // running in the background & behind the lock screen; pauses itself at ≤20% battery on power).
+        findViewById<Button>(R.id.btnBackground)?.setOnClickListener {
+            when {
+                CoughCaptureService.running -> {
+                    CoughCaptureService.stop(this)
+                    Toast.makeText(this, "Background cough capture stopped", Toast.LENGTH_SHORT).show()
+                    updateBackgroundButton(false)
+                }
+                ActivityCompat.checkSelfPermission(this, Manifest.permission.RECORD_AUDIO) == PackageManager.PERMISSION_GRANTED -> {
+                    CoughCaptureService.start(this)
+                    Toast.makeText(this, "Background cough capture ON — keeps listening in the background & locked. Stop from the notification or this button.", Toast.LENGTH_LONG).show()
+                    updateBackgroundButton(true)
+                }
+                else -> Toast.makeText(this, "Grant the mic first: tap Listen once, then try again.", Toast.LENGTH_LONG).show()
+            }
+        }
+
         findViewById<Button>(R.id.btnQuitTop).setOnClickListener {
             showQuitSanityCheck()
         }
@@ -677,9 +695,30 @@ class MainActivity : AppCompatActivity() {
 
     private var activeEncoding = AudioFormat.ENCODING_PCM_FLOAT
 
+    /** Reflect background-capture service state on the BACKGROUND toggle (label + colour). */
+    private fun updateBackgroundButton(on: Boolean = CoughCaptureService.running) {
+        val btn = findViewById<Button>(R.id.btnBackground) ?: return
+        btn.text = if (on) "● CAPTURING" else getString(R.string.btn_background)
+        btn.backgroundTintList = android.content.res.ColorStateList.valueOf(
+            android.graphics.Color.parseColor(if (on) "#CC0000" else "#444444"))
+    }
+
+    override fun onResume() {
+        super.onResume()
+        updateBackgroundButton()   // toggle reflects the service's actual state on return
+    }
+
     private fun startRecording() {
         if (recording.get()) return
         if (ActivityCompat.checkSelfPermission(this, Manifest.permission.RECORD_AUDIO) != PackageManager.PERMISSION_GRANTED) return
+
+        // The live spectrogram needs the mic, which can't be shared with the background capture
+        // service — pause it so the FFT scroll actually shows (running both = one loses the mic).
+        if (CoughCaptureService.running) {
+            CoughCaptureService.stop(this)
+            Toast.makeText(this, "Background capture paused for the live view", Toast.LENGTH_SHORT).show()
+            updateBackgroundButton(false)
+        }
 
         val audioManager = getSystemService(AUDIO_SERVICE) as AudioManager
 
