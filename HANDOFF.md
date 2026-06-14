@@ -4,6 +4,25 @@ Read this file first, then continue the work. This captures context that is NOT 
 codebase or the other .md files — it lives only in the chat session that produced it.
 Date: 2026-06-12 (latest session below; older 2026-06-05 notes follow).
 
+## SESSION 2026-06-13 — always-on background capture + capture-quality decisions (M)
+Workspace moved to **D:\AndroidProjects** (fresh clones from GitHub; datasets alongside). Five user
+decisions, all implemented in M **and** L, both `assembleDebug` green and pushed:
+1. **Always-on**: ported `CoughCaptureService` (foreground-mic service, wake lock, notifications,
+   live gallery refresh) to M + a **BACKGROUND** toggle on Listen (portrait+landscape) with mic
+   mutual-exclusivity (starting the live view pauses the service). Manifest gained
+   FOREGROUND_SERVICE_MICROPHONE / WAKE_LOCK / VIBRATE + the microphone-typed service.
+2. **Retain until dumped**: coughs are never auto-deleted (no rotation); the existing Gallery →
+   "Offer recordings to desktop" USB path dumps them. Clear-after-dump is a desktop-phase item.
+3. **Battery**: capture continuously while charging OR battery > 20%; at **≤20% on battery** pause
+   background capture (release mic + wake lock — only the Listen screen captures), auto-resume when
+   charged or back above 20%. `LOW_PCT = 20` in the service.
+4. **UNPROCESSED**: new `MicSource` picks `AudioSource.UNPROCESSED` (truest waveform, matches desktop)
+   with a **proactive** MIC fallback — API<24 / `PROPERTY_SUPPORT_AUDIO_SOURCE_UNPROCESSED` / a
+   known-bad denylist — not try-and-fail. Mic **spinner** (`setPreferredDevice`) is unaffected.
+5. **Precision**: `CoughClassifier.PRECISION_THRESHOLD = 0.65` used at every real-time capture site.
+NOT yet device-tested. Per user, next: discuss desktop (D), then circle back to mobile (deploy/test).
+Background-service mic *selection* (re-resolving the spinner's device) is a follow-up; default routing for now.
+
 ## SESSION 2026-06-12 — cough detector, Listen-screen auto-capture, launcher roundel
 - **New cough/not-cough detector**: ported `WholeClipFeatures` + `CoughForest` + `CoughClassifier`
   (+ bundled `cough_forest.txt.gz`, ~2.1 MB) into `cough/`. The trained random forest (AUC 0.92,
