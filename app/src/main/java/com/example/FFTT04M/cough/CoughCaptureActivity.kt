@@ -96,7 +96,7 @@ class CoughCaptureActivity : AppCompatActivity() {
             sampleRate, AudioFormat.CHANNEL_IN_MONO, AudioFormat.ENCODING_PCM_16BIT,
         ).coerceAtLeast(sampleRate / 4)
         val recorder = try {
-            AudioRecord(MediaRecorder.AudioSource.MIC, sampleRate,
+            AudioRecord(com.example.FFTT04M.MicSource.sources(this)[0], sampleRate,
                 AudioFormat.CHANNEL_IN_MONO, AudioFormat.ENCODING_PCM_16BIT, minBuf * 2)
         } catch (e: Throwable) {
             runOnUiThread { toast("Cannot open microphone: ${e.message}"); stopCapture() }; return

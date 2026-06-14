@@ -13,6 +13,11 @@ object CoughClassifier {
      *  Lower → more sensitive, higher → more specific. */
     @Volatile var thresholdOverride: Double? = null
 
+    /** Precision-favoring operating point for live/background auto-capture (per user decision: favor
+     *  precision over recall). Above the model's bundled point → fewer false captures at some cost to
+     *  sensitivity. All real-time capture sites set this; tune once validated on the desktop corpus. */
+    const val PRECISION_THRESHOLD = 0.65
+
     fun available(): Boolean = forest != null
 
     /** Effective decision threshold (override if set, else the model's bundled value). */
