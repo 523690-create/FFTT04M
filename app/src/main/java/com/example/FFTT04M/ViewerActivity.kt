@@ -1855,6 +1855,8 @@ class ViewerActivity : AppCompatActivity() {
             .setBufferSizeInBytes(bufferSize.coerceAtLeast(audioData.size * 2))
             .setTransferMode(AudioTrack.MODE_STATIC)
             .build()
+        // Mute the always-on capture so it doesn't re-record our own playback as new clips.
+        CoughCaptureService.playbackActive = true
         audioTrack?.apply {
             write(audioData, 0, audioData.size, AudioTrack.WRITE_BLOCKING)
             play()
@@ -1878,6 +1880,7 @@ class ViewerActivity : AppCompatActivity() {
                 if (!isFinishing && !isDestroyed) viewerFft.clearPlayCursor()
             }
         }
+        CoughCaptureService.playbackActive = false   // resume capture after playback
     }
 
     /**
@@ -1984,6 +1987,7 @@ class ViewerActivity : AppCompatActivity() {
     }
 
     private fun stopAudio() {
+        CoughCaptureService.playbackActive = false   // ensure capture resumes if playback is cut short
         audioTrack?.apply {
             try {
                 stop()
