@@ -941,17 +941,17 @@ class MainActivity : AppCompatActivity() {
     }
 
     /**
-     * Failsafe for the persisted mic: watch for the selected input device disconnecting (USB pulled,
-     * Bluetooth dropped) and fall back to the system default so recording keeps working.
+     * Live mic hot-plug handling: when an input device is plugged in or pulled out mid-session we
+     * (1) refresh the spinner immediately so new mics appear without a restart, and (2) keep the
+     * user's chosen mic — falling back to the default while it's gone and reacquiring it the moment
+     * it reconnects (see [handleDevicesChanged]).
      */
     private fun registerDeviceCallback() {
         if (audioDeviceCallback != null) return
         val audioManager = getSystemService(AUDIO_SERVICE) as AudioManager
         val cb = object : AudioDeviceCallback() {
-            override fun onAudioDevicesRemoved(removed: Array<out AudioDeviceInfo>) {
-                val sel = selectedDevice ?: return
-                if (removed.any { it.id == sel.id }) handleMicDisconnected()
-            }
+            override fun onAudioDevicesAdded(added: Array<out AudioDeviceInfo>) = handleDevicesChanged()
+            override fun onAudioDevicesRemoved(removed: Array<out AudioDeviceInfo>) = handleDevicesChanged()
         }
         audioManager.registerAudioDeviceCallback(cb, Handler(Looper.getMainLooper()))
         audioDeviceCallback = cb
@@ -964,16 +964,37 @@ class MainActivity : AppCompatActivity() {
         audioDeviceCallback = null
     }
 
-    private fun handleMicDisconnected() {
-        val name = selectedDevice?.productName?.toString() ?: "the selected mic"
-        // Drop the dead device and stop persisting it, then fall back to the default input.
-        selectedDevice = null
-        prefs.edit { remove("mic_device") }
+    /**
+     * Re-read the input device list and refresh the spinner whenever mics are plugged/unplugged.
+     *  - New mic appears  → it shows up in the spinner right away (no QUIT/restart needed).
+     *  - Chosen mic pulled → fall back to the default for now, but KEEP the persisted choice so it
+     *    can be reacquired (we no longer delete "mic_device").
+     *  - Chosen mic reconnects → setupMicSpinnerWithDevices restores it from prefs; we detect the
+     *    transition from "default" back to a real device and restart capture on it.
+     */
+    private fun handleDevicesChanged() {
         val audioManager = getSystemService(AUDIO_SERVICE) as AudioManager
         availableDevices = audioManager.getDevices(AudioManager.GET_DEVICES_INPUTS).toMutableList()
+
+        val activeId = selectedDevice?.id
+        // Active mic vanished → drop the dead handle (but not the persisted name) and use the default.
+        if (activeId != null && availableDevices.none { it.id == activeId }) {
+            val name = selectedDevice?.productName?.toString() ?: "the selected mic"
+            selectedDevice = null
+            setupMicSpinnerWithDevices(availableDevices)
+            restartRecording()
+            Toast.makeText(this, "Mic \"$name\" disconnected — using default (will reacquire on reconnect)", Toast.LENGTH_LONG).show()
+            return
+        }
+
+        // Rebuild the spinner so newly-connected mics appear; this also restores the persisted choice
+        // into selectedDevice if that mic is (now) present.
+        val before = selectedDevice
         setupMicSpinnerWithDevices(availableDevices)
-        restartRecording()
-        Toast.makeText(this, "Mic \"$name\" disconnected — using default", Toast.LENGTH_LONG).show()
+        if (before == null && selectedDevice != null) {     // chosen mic just came back
+            restartRecording()
+            Toast.makeText(this, "Reacquired mic \"${selectedDevice?.productName}\"", Toast.LENGTH_SHORT).show()
+        }
     }
 
     private fun runLatencyMeasurement() {
