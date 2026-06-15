@@ -49,6 +49,8 @@ class GalleryActivity : AppCompatActivity() {
     private var lastSelectedName: String? = null
     private var lastAcquiredName: String? = null
     private var flashName: String? = null
+    private val DEFAULT_ITEM_BG = 0xFF111111.toInt()   // matches gallery_item.xml root background
+    private val HIGHLIGHT_BG = 0xFF7A5200.toInt()       // amber tint for the last-opened recording
 
     // Scanner result (receiver side): a Wi-Fi (FFTT1) or Bluetooth (FFTTBT) handshake.
     private val scanLauncher = registerForActivityResult(ScanContract()) { result ->
@@ -395,7 +397,39 @@ class GalleryActivity : AppCompatActivity() {
         files = filesDir?.listFiles { file -> file.extension == "wav" || file.extension == "flac" }
             ?.sortedByDescending { it.lastModified() }
             ?.toMutableList() ?: mutableListOf()
+
+        // #4b: detect a freshly acquired recording (newest filename changed since last load) so we can
+        // flash it — but only the first time we see a non-empty list, never on the very first load.
+        val newest = files.firstOrNull()?.name
+        if (newest != null && lastAcquiredName != null && newest != lastAcquiredName) flashName = newest
+        lastAcquiredName = newest
+
+        // Preserve scroll position across the adapter swap (don't jump to top on live refresh/onResume,
+        // which also means we never scroll away from a highlighted selection the user is looking at).
+        val lmState = recyclerView.layoutManager?.onSaveInstanceState()
         recyclerView.adapter = GalleryAdapter(files)
+        if (lmState != null) recyclerView.layoutManager?.onRestoreInstanceState(lmState)
+
+        // Flash the new arrival only if it actually sits in the currently visible range.
+        flashName?.let { name ->
+            recyclerView.post {
+                val pos = files.indexOfFirst { it.name == name }
+                val lm = recyclerView.layoutManager as? LinearLayoutManager
+                if (pos >= 0 && lm != null &&
+                    pos in lm.findFirstVisibleItemPosition()..lm.findLastVisibleItemPosition()) {
+                    recyclerView.findViewHolderForAdapterPosition(pos)?.itemView?.let { flashView(it) }
+                }
+                flashName = null
+            }
+        }
+    }
+
+    /** Brief alpha blink to draw the eye to a just-arrived recording. */
+    private fun flashView(v: View) {
+        android.animation.ObjectAnimator
+            .ofFloat(v, "alpha", 1f, 0.2f, 1f, 0.2f, 1f)
+            .setDuration(900)
+            .start()
     }
 
     private fun updateLayoutManager() {
@@ -483,7 +517,14 @@ class GalleryActivity : AppCompatActivity() {
                 holder.imageView.setImageResource(android.R.drawable.ic_menu_report_image)
             }
 
+            // #4b: highlight the recording the user most recently opened so it's easy to find on return.
+            holder.root.setBackgroundColor(
+                if (file.name == lastSelectedName) HIGHLIGHT_BG else DEFAULT_ITEM_BG
+            )
+
             holder.itemView.setOnClickListener {
+                lastSelectedName = file.name
+                galleryPrefs.edit().putString("gallery_last_selected", file.name).apply()
                 val intent = Intent(this@GalleryActivity, ViewerActivity::class.java).apply {
                     putExtra("FILE_PATH", file.absolutePath)
                 }
