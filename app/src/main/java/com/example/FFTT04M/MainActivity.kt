@@ -738,32 +738,54 @@ class MainActivity : AppCompatActivity() {
             if (!stillConnected) selectedDevice = null
         }
 
-        if (selectedDevice?.type == AudioDeviceInfo.TYPE_BLUETOOTH_SCO) {
+        // Bluetooth mics (classic SCO or LE Audio) only capture through the COMMUNICATION route — the
+        // default capture path / UNPROCESSED source stays on the built-in mic, which is exactly why a
+        // connected BT mic produced no input. Establish that route here, then below we force a
+        // BT-compatible source (MIC/VOICE_RECOGNITION, never UNPROCESSED) and 16-bit/16 kHz format.
+        val isBtMic = selectedDevice?.type == AudioDeviceInfo.TYPE_BLUETOOTH_SCO ||
+            (Build.VERSION.SDK_INT >= Build.VERSION_CODES.S &&
+                selectedDevice?.type == AudioDeviceInfo.TYPE_BLE_HEADSET)
+        if (isBtMic) {
             if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.S) {
                 try {
-                    audioManager.setCommunicationDevice(selectedDevice!!)
+                    if (!audioManager.setCommunicationDevice(selectedDevice!!)) selectedDevice = null
                 } catch (e: Exception) {
-                    selectedDevice = null // SCO route unavailable; fall back to default
+                    selectedDevice = null // SCO/LE route unavailable; fall back to default
+                }
+            } else {
+                @Suppress("DEPRECATION")
+                try {
+                    audioManager.mode = AudioManager.MODE_IN_COMMUNICATION
+                    audioManager.startBluetoothSco()
+                    audioManager.isBluetoothScoOn = true
+                } catch (e: Exception) {
+                    selectedDevice = null
                 }
             }
         }
+        val btRoute = isBtMic && selectedDevice != null
 
         var encoding = AudioFormat.ENCODING_PCM_FLOAT
-        var tryRates = intArrayOf(44100, 16000)
+        // SCO tops out at 8/16 kHz; try 16 kHz first for BT, full rate otherwise.
+        var tryRates = if (btRoute) intArrayOf(16000, 44100) else intArrayOf(44100, 16000)
         var record: AudioRecord? = null
         var activeRate = 44100
 
         outer@for (rate in tryRates) {
-            val encs = if (rate == 44100) intArrayOf(AudioFormat.ENCODING_PCM_FLOAT, AudioFormat.ENCODING_PCM_16BIT)
+            // Bluetooth SCO is 16-bit PCM only — float capture would silently fall back to built-in.
+            val encs = if (rate == 44100 && !btRoute) intArrayOf(AudioFormat.ENCODING_PCM_FLOAT, AudioFormat.ENCODING_PCM_16BIT)
                        else intArrayOf(AudioFormat.ENCODING_PCM_16BIT)
-            
+
             for (enc in encs) {
                 val minSize = AudioRecord.getMinBufferSize(rate, AudioFormat.CHANNEL_IN_MONO, enc)
                 if (minSize <= 0) continue
-                
+
                 val bufSize = max(minSize, fftSize * (if (enc == AudioFormat.ENCODING_PCM_FLOAT) 4 else 2))
-                val sources = MicSource.sources(this@MainActivity)   // UNPROCESSED when trusted, else MIC
-                
+                // BT must use a communication-capable source; UNPROCESSED is built-in-mic only.
+                val sources = if (btRoute)
+                    intArrayOf(MediaRecorder.AudioSource.VOICE_RECOGNITION, MediaRecorder.AudioSource.MIC)
+                else MicSource.sources(this@MainActivity)   // UNPROCESSED when trusted, else MIC
+
                 for (src in sources) {
                     try {
                         val r = AudioRecord(src, rate, AudioFormat.CHANNEL_IN_MONO, enc, bufSize)
@@ -938,9 +960,19 @@ class MainActivity : AppCompatActivity() {
         audioRecord = null
         val audioManager = getSystemService(AUDIO_SERVICE) as AudioManager
         if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.S) {
-            if (audioManager.communicationDevice?.type == AudioDeviceInfo.TYPE_BLUETOOTH_SCO) {
+            val t = audioManager.communicationDevice?.type
+            if (t == AudioDeviceInfo.TYPE_BLUETOOTH_SCO || t == AudioDeviceInfo.TYPE_BLE_HEADSET) {
                 audioManager.clearCommunicationDevice()
             }
+        } else {
+            @Suppress("DEPRECATION")
+            try {
+                if (audioManager.isBluetoothScoOn) {
+                    audioManager.isBluetoothScoOn = false
+                    audioManager.stopBluetoothSco()
+                    audioManager.mode = AudioManager.MODE_NORMAL
+                }
+            } catch (_: Exception) {}
         }
     }
 
