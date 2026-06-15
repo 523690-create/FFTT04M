@@ -4,6 +4,8 @@ import android.content.Context
 import org.json.JSONObject
 import java.io.File
 import java.util.Locale
+import kotlin.math.roundToInt
+import kotlin.math.sqrt
 
 /**
  * On-device "cloud match": compares a captured clip's cough events against a compact reference set
@@ -70,6 +72,14 @@ object ClipMatcher {
 
     data class Match(val label: String, val src: String, val distance: Double, val cough: Boolean)
 
+    // Distance→confidence: in the 21-D z-scored space the distance between unrelated points is
+    // ≈ sqrt(2·dim). Map that to 0% and an exact match (d=0) to 100%, linearly. Heuristic, but it
+    // turns the raw Euclidean distance into a readable score; tune DMAX/LOW_CONF if needed.
+    private val DMAX = sqrt(2.0 * 21)
+    private const val LOW_CONF_PCT = 50
+
+    fun confidencePct(d: Double): Int = ((1.0 - d / DMAX).coerceIn(0.0, 1.0) * 100).roundToInt()
+
     private fun labelOf(r: Ref): String =
         listOf(r.sound, r.health)
             .filter { it.isNotBlank() && !it.equals("na", true) }
@@ -121,15 +131,17 @@ object ClipMatcher {
         val txt = File(parent, wav.nameWithoutExtension + ".txt")
         if (txt.exists()) {
             val existing = runCatching { txt.readText() }.getOrNull() ?: return
-            if (!existing.startsWith("auto-match")) return        // user comment → never touch
-            if (existing.startsWith("auto-match (top")) return    // already top-N → one-time upgrade done
-            // else: an OLD single-line auto-match → upgrade it to top-3 below
+            if (!existing.startsWith("auto-match")) return    // user comment → never touch
+            if (existing.contains("conf ")) return            // already current format → no re-analysis
+            // else: an older auto-match (single, or top-3 without confidence) → upgrade below
         }
         val top = matchTop(ctx, pcm, sampleRate, 3)
         if (top.isEmpty()) return
-        val sb = StringBuilder("auto-match (top ${top.size}):")
+        val lowConf = confidencePct(top[0].distance) < LOW_CONF_PCT
+        val sb = StringBuilder("auto-match (top ${top.size}${if (lowConf) " — LOW CONFIDENCE" else ""}):")
         top.forEachIndexed { i, m ->
-            sb.append(String.format(Locale.US, "\n  %d) %s  [%s, d=%.2f]", i + 1, m.label, m.src, m.distance))
+            sb.append(String.format(Locale.US, "\n  %d) %s  [%s, d=%.2f, conf %d%%]",
+                i + 1, m.label, m.src, m.distance, confidencePct(m.distance)))
         }
         runCatching { txt.writeText(sb.toString()) }
     }

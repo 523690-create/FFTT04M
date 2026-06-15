@@ -34,7 +34,7 @@ object ClipBackfill {
                 // (A user comment, or one already in top-N format, is left alone — no re-analysis.)
                 val existing = if (txt.exists()) runCatching { txt.readText() }.getOrNull() else null
                 val needComment = existing == null ||
-                    (existing.startsWith("auto-match") && !existing.startsWith("auto-match (top"))
+                    (existing.startsWith("auto-match") && !existing.contains("conf "))
                 if (!needIcon && !needComment) continue
                 val data = try { WavReader.read(wav) } catch (_: Throwable) { continue }
                 var changed = false
