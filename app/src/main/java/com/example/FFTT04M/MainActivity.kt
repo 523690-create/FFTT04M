@@ -99,6 +99,11 @@ class MainActivity : AppCompatActivity() {
     // Bluetooth SCO routes asynchronously: a capture started before the SCO link is up records from
     // the built-in mic. We verify the routed device shortly after start and re-route ONCE if needed.
     private var btRerouteAttempted = false
+    // Guards the hot-plug callback against FALSE "disconnect": an intentional stop (restart, or going
+    // to background) clears the SCO comm device, which removes the BT input and would otherwise be
+    // read as the user unplugging the mic. We ignore device changes while restarting or backgrounded.
+    private var btRestarting = false
+    private var isForeground = false
     private var isCalibrating = false
     @Volatile private var latestFrameEnergy = 0f
 
@@ -717,6 +722,7 @@ class MainActivity : AppCompatActivity() {
 
     override fun onResume() {
         super.onResume()
+        isForeground = true
         updateBackgroundButton()   // toggle reflects the service's actual state on return
         // Privacy: the live mic runs ONLY while the Listen screen is in the foreground. Resume it on
         // return (unless the user's authorized background CoughCaptureService owns the mic).
@@ -731,6 +737,7 @@ class MainActivity : AppCompatActivity() {
         // Privacy: never keep capturing once this screen isn't visible (on API < 28 a backgrounded
         // AudioRecord would otherwise capture REAL audio). The only sanctioned background capture is
         // the user-toggled, notification-backed CoughCaptureService — leave that one running.
+        isForeground = false   // also tells the hot-plug callback to ignore the SCO teardown below
         stopRecording()
     }
 
@@ -1028,8 +1035,13 @@ class MainActivity : AppCompatActivity() {
     }
 
     private fun restartRecording() {
+        // Mark the teardown+rebuild as intentional so the hot-plug callback doesn't misread the
+        // transient SCO-device removal (from clearCommunicationDevice in stopRecording) as a
+        // disconnect. Cleared after the queued add/remove device events have drained.
+        btRestarting = true
         stopRecording()
         startRecording()
+        Handler(Looper.getMainLooper()).postDelayed({ btRestarting = false }, 1500)
     }
 
     /**
@@ -1065,6 +1077,9 @@ class MainActivity : AppCompatActivity() {
      *    transition from "default" back to a real device and restart capture on it.
      */
     private fun handleDevicesChanged() {
+        // Ignore device churn we caused ourselves: an intentional restart transiently clears the SCO
+        // device, and a backgrounded screen tears capture down — neither is a real user disconnect.
+        if (btRestarting || !isForeground) return
         val audioManager = getSystemService(AUDIO_SERVICE) as AudioManager
         availableDevices = audioManager.getDevices(AudioManager.GET_DEVICES_INPUTS).toMutableList()
 
