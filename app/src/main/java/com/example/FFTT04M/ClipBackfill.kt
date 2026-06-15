@@ -30,20 +30,27 @@ object ClipBackfill {
         val upgraded = prefs.getBoolean("clip_match_upgraded_v2", false)
         try {
             val dir = GalleryTransfer.recordingsDir(ctx) ?: ctx.filesDir
-            val wavs = dir.listFiles { f -> f.isFile && f.extension.equals("wav", true) }
-                ?: return
+            // ONE directory listing; membership via in-memory sets (per-file exists() on emulated
+            // storage was ~490 stats / 5s per open). Now steady-state opens are a single listdir.
+            val all = dir.listFiles() ?: return
+            val wavs = all.filter { it.isFile && it.extension.equals("wav", true) }
+            val haveIcon = HashSet<String>(); val haveTxt = HashSet<String>()
+            for (f in all) when {
+                f.extension.equals("png", true) -> haveIcon.add(f.nameWithoutExtension)
+                f.extension.equals("txt", true) -> haveTxt.add(f.nameWithoutExtension)
+            }
             android.util.Log.i("FFTT04M", "ClipBackfill: scanning ${wavs.size} clips (upgraded=$upgraded)")
             for (wav in wavs) {
                 val base = wav.nameWithoutExtension
                 val png = File(dir, "$base.png")
                 val txt = File(dir, "$base.txt")
-                val needIcon = !png.exists()
-                // After the one-time upgrade, only a MISSING .txt needs work (cheap). Before it, also
-                // read content to upgrade old auto-match comments (skips user comments / current ones).
+                val needIcon = base !in haveIcon
+                // After the one-time upgrade, only a MISSING .txt needs work. Before it, read content
+                // for clips that have a .txt to upgrade old auto-match comments (user comments left be).
                 val needComment = if (upgraded) {
-                    !txt.exists()
+                    base !in haveTxt
                 } else {
-                    val existing = if (txt.exists()) runCatching { txt.readText() }.getOrNull() else null
+                    val existing = if (base in haveTxt) runCatching { txt.readText() }.getOrNull() else null
                     existing == null || (existing.startsWith("auto-match") && !existing.contains("conf "))
                 }
                 if (!needIcon && !needComment) continue
