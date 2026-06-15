@@ -302,8 +302,11 @@ class GalleryActivity : AppCompatActivity() {
                                 org.json.JSONObject(ackFile.readText()).optInt("received_count", wavs.size)
                             }.getOrDefault(wavs.size)
                             runOnUiThread {
-                                if (!isFinishing) msgView.text =
-                                    "✓ Desktop received $n recording(s).\n\nFolder: $path"
+                                if (!isFinishing) {
+                                    msgView.text = "✓ Desktop received $n recording(s).\n\nFolder: $path"
+                                    // The phone decides whether to delete its now-safely-copied data.
+                                    promptDeleteAfterTransfer(wavs, n)
+                                }
                             }
                             break
                         }
@@ -312,6 +315,31 @@ class GalleryActivity : AppCompatActivity() {
                 }
             }
         }
+    }
+
+    /** After the desktop confirms receipt, let the user (the phone decides) delete the copies it just
+     *  handed over — frees space and avoids re-sending. Destructive, so it's an explicit confirm. */
+    private fun promptDeleteAfterTransfer(transferred: List<File>, ackedCount: Int) {
+        AlertDialog.Builder(this)
+            .setTitle("Delete transferred recordings?")
+            .setMessage("The desktop confirmed receipt of $ackedCount recording(s).\n\n" +
+                "Delete the ${transferred.size} recording(s) you offered from this phone now? " +
+                "Their spectrogram thumbnails and metadata go too. This can't be undone.")
+            .setPositiveButton("Delete") { _, _ ->
+                var deleted = 0
+                transferred.forEach { wav ->
+                    val base = wav.nameWithoutExtension
+                    val parent = wav.parentFile
+                    if (wav.exists() && wav.delete()) deleted++
+                    File(parent, "$base.png").delete()
+                    File(parent, "$base.txt").delete()
+                    File(parent, "$base.json").delete()
+                }
+                Toast.makeText(this, "Deleted $deleted transferred recording(s)", Toast.LENGTH_LONG).show()
+                loadFiles()
+            }
+            .setNegativeButton("Keep", null)
+            .show()
     }
 
     /** Build a .fftt bundle and hand it to the system share sheet (Quick Share / Bluetooth / email /
