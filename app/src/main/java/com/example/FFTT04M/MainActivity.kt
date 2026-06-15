@@ -741,16 +741,18 @@ class MainActivity : AppCompatActivity() {
             if (!stillConnected) selectedDevice = null
         }
 
-        // Bluetooth mics (classic SCO or LE Audio) only capture through the COMMUNICATION route — the
-        // default capture path / UNPROCESSED source stays on the built-in mic, which is exactly why a
-        // connected BT mic produced no input. Establish that route here, then below we force a
-        // BT-compatible source (MIC/VOICE_RECOGNITION, never UNPROCESSED) and 16-bit/16 kHz format.
+        // Bluetooth mics (classic SCO or LE Audio) only capture through the COMMUNICATION route, and
+        // that route ONLY actually streams when the AudioManager is in MODE_IN_COMMUNICATION —
+        // setCommunicationDevice() alone leaves capture silently on the built-in mic (the reported
+        // bug). Establish mode + route here; below we use VOICE_COMMUNICATION (the source that follows
+        // the communication device; VOICE_RECOGNITION/UNPROCESSED stick to the built-in mic).
         val isBtMic = selectedDevice?.type == AudioDeviceInfo.TYPE_BLUETOOTH_SCO ||
             (Build.VERSION.SDK_INT >= Build.VERSION_CODES.S &&
                 selectedDevice?.type == AudioDeviceInfo.TYPE_BLE_HEADSET)
         if (isBtMic) {
             if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.S) {
                 try {
+                    audioManager.mode = AudioManager.MODE_IN_COMMUNICATION   // REQUIRED for SCO audio
                     if (!audioManager.setCommunicationDevice(selectedDevice!!)) selectedDevice = null
                 } catch (e: Exception) {
                     selectedDevice = null // SCO/LE route unavailable; fall back to default
@@ -784,9 +786,10 @@ class MainActivity : AppCompatActivity() {
                 if (minSize <= 0) continue
 
                 val bufSize = max(minSize, fftSize * (if (enc == AudioFormat.ENCODING_PCM_FLOAT) 4 else 2))
-                // BT must use a communication-capable source; UNPROCESSED is built-in-mic only.
+                // BT must use VOICE_COMMUNICATION — it follows the communication device. MIC is a
+                // fallback; VOICE_RECOGNITION/UNPROCESSED prefer the built-in mic and ignore SCO.
                 val sources = if (btRoute)
-                    intArrayOf(MediaRecorder.AudioSource.VOICE_RECOGNITION, MediaRecorder.AudioSource.MIC)
+                    intArrayOf(MediaRecorder.AudioSource.VOICE_COMMUNICATION, MediaRecorder.AudioSource.MIC)
                 else MicSource.sources(this@MainActivity)   // UNPROCESSED when trusted, else MIC
 
                 for (src in sources) {
@@ -996,6 +999,7 @@ class MainActivity : AppCompatActivity() {
             val t = audioManager.communicationDevice?.type
             if (t == AudioDeviceInfo.TYPE_BLUETOOTH_SCO || t == AudioDeviceInfo.TYPE_BLE_HEADSET) {
                 audioManager.clearCommunicationDevice()
+                audioManager.mode = AudioManager.MODE_NORMAL   // leave communication mode we set for SCO
             }
         } else {
             @Suppress("DEPRECATION")
