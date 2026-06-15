@@ -24,10 +24,10 @@ android {
         applicationId = "com.example.FFTT04M"
         minSdk = 32
         targetSdk = 36
-        // Versioning starts at major 2 with a build timestamp: "2.<yyMMdd.HHmm>".
+        // Versioning starts at major 2 with a build timestamp; "M" prefix marks this as the M variant.
         // versionCode = whole minutes since the Unix epoch (monotonic, fits Int until ~2065).
         versionCode = (System.currentTimeMillis() / 60000L).toInt()
-        versionName = "2.${SimpleDateFormat("yyMMdd.HHmm", Locale.US).format(Date())}"
+        versionName = "M2.${SimpleDateFormat("yyMMdd.HHmm", Locale.US).format(Date())}"
 
         testInstrumentationRunner = "androidx.test.runner.AndroidJUnitRunner"
     }

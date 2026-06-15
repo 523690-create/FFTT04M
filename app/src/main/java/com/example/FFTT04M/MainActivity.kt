@@ -728,6 +728,8 @@ class MainActivity : AppCompatActivity() {
         // return (unless the user's authorized background CoughCaptureService owns the mic).
         if (!CoughCaptureService.running &&
             ActivityCompat.checkSelfPermission(this, Manifest.permission.RECORD_AUDIO) == PackageManager.PERMISSION_GRANTED) {
+            fftHeatMap.isFrozen = false   // returning to Listen is always live — never a stuck/frozen scroll
+            hideFrozenUi()
             startRecording()
         }
     }
@@ -741,7 +743,7 @@ class MainActivity : AppCompatActivity() {
         stopRecording()
     }
 
-    private fun startRecording() {
+    private fun startRecording(isRetry: Boolean = false) {
         if (recording.get()) return
         if (ActivityCompat.checkSelfPermission(this, Manifest.permission.RECORD_AUDIO) != PackageManager.PERMISSION_GRANTED) return
 
@@ -832,7 +834,15 @@ class MainActivity : AppCompatActivity() {
         }
 
         if (record == null) {
-            Toast.makeText(this, "Failed to initialize audio recording", Toast.LENGTH_LONG).show()
+            // The mic HAL can briefly refuse a re-acquire right after release (e.g. returning from
+            // Gallery/another app) — that left the live FFT frozen. Retry once shortly before failing.
+            if (!isRetry) {
+                Handler(Looper.getMainLooper()).postDelayed({
+                    if (!recording.get() && isForeground && !CoughCaptureService.running) startRecording(isRetry = true)
+                }, 350)
+            } else {
+                Toast.makeText(this, "Failed to initialize audio recording", Toast.LENGTH_LONG).show()
+            }
             return
         }
 
