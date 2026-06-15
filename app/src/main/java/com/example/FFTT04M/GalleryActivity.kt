@@ -197,6 +197,20 @@ class GalleryActivity : AppCompatActivity() {
         loadFiles()
         handleViewIntent(intent)   // a shared bundle may have launched us
 
+        // "Dig deeper into clip storage": backfill missing FFT icons + match comments for clips that
+        // were stored without them. Background; refreshes the grid (throttled) as artifacts appear.
+        thread {
+            var lastRefresh = 0L
+            ClipBackfill.run(this) {
+                val now = System.currentTimeMillis()
+                if (now - lastRefresh > 1500L) {
+                    lastRefresh = now
+                    runOnUiThread { if (!isFinishing && !isDestroyed) loadFiles() }
+                }
+            }
+            runOnUiThread { if (!isFinishing && !isDestroyed) loadFiles() }   // final refresh
+        }
+
         btnViewToggle.setOnClickListener {
             isGridView = !isGridView
             prefs.edit().putBoolean("gallery_is_grid", isGridView).apply()
