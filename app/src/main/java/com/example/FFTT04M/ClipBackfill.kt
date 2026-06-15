@@ -21,10 +21,13 @@ object ClipBackfill {
     fun run(ctx: Context, onProgress: (() -> Unit)? = null) {
         if (running) return
         running = true
+        var icons = 0; var comments = 0; var failed = 0
+        val t0 = System.currentTimeMillis()
         try {
             val dir = GalleryTransfer.recordingsDir(ctx) ?: ctx.filesDir
             val wavs = dir.listFiles { f -> f.isFile && f.extension.equals("wav", true) }
                 ?: return
+            android.util.Log.i("FFTT04M", "ClipBackfill: scanning ${wavs.size} clips in ${dir.absolutePath}")
             for (wav in wavs) {
                 val base = wav.nameWithoutExtension
                 val png = File(dir, "$base.png")
@@ -36,27 +39,32 @@ object ClipBackfill {
                 val needComment = existing == null ||
                     (existing.startsWith("auto-match") && !existing.contains("conf "))
                 if (!needIcon && !needComment) continue
-                val data = try { WavReader.read(wav) } catch (_: Throwable) { continue }
+                val data = try { WavReader.read(wav) } catch (e: Throwable) {
+                    failed++; android.util.Log.w("FFTT04M", "ClipBackfill: read failed ${wav.name}: ${e.message}"); continue
+                }
                 var changed = false
                 if (needComment) {
                     runCatching { ClipMatcher.annotate(ctx, wav, data.samples, data.sampleRate) }
-                    if (txt.exists()) changed = true
+                    if (txt.exists()) { comments++; changed = true }
                 }
                 if (needIcon) {
                     runCatching {
                         SpectrogramThumb.render(ctx, data.samples, data.sampleRate)?.let { bmp ->
                             FileOutputStream(png).use { bmp.compress(Bitmap.CompressFormat.PNG, 100, it) }
                             bmp.recycle()
-                            changed = true
+                            icons++; changed = true
                         }
                     }
                 }
                 if (changed) onProgress?.invoke()
             }
-        } catch (_: Throwable) {
-            // best-effort backfill; never crash the gallery
+        } catch (e: Throwable) {
+            android.util.Log.w("FFTT04M", "ClipBackfill aborted: ${e.message}")
         } finally {
             running = false
+            android.util.Log.i("FFTT04M",
+                "ClipBackfill done: +$icons icons, +$comments comments, $failed failed, " +
+                "${System.currentTimeMillis() - t0}ms (matcher ready=${ClipMatcher.isReady})")
         }
     }
 }

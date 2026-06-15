@@ -507,6 +507,13 @@ class GalleryActivity : AppCompatActivity() {
         override fun onCreateViewHolder(parent: ViewGroup, viewType: Int): ViewHolder {
             val view = LayoutInflater.from(parent.context).inflate(R.layout.gallery_item, parent, false)
             applyAutoSizeText(view)
+            // The match comment is multi-line (top-3) — keep it at a fixed legible size instead of
+            // letting applyAutoSizeText shrink it toward 6sp to fit (which made it illegibly tiny).
+            view.findViewById<TextView>(R.id.itemComment)?.let {
+                androidx.core.widget.TextViewCompat.setAutoSizeTextTypeWithDefaults(
+                    it, androidx.core.widget.TextViewCompat.AUTO_SIZE_TEXT_TYPE_NONE)
+                it.setTextSize(android.util.TypedValue.COMPLEX_UNIT_SP, 11f)
+            }
             return ViewHolder(view)
         }
 
@@ -524,8 +531,8 @@ class GalleryActivity : AppCompatActivity() {
                 holder.textView.gravity = android.view.Gravity.CENTER
                 holder.textView.maxLines = 1
                 holder.textView.ellipsize = android.text.TextUtils.TruncateAt.END
-                holder.commentView.gravity = android.view.Gravity.CENTER
-                holder.commentView.maxLines = 1
+                holder.commentView.gravity = android.view.Gravity.START   // multi-line top-3 reads left-aligned
+                holder.commentView.maxLines = 4                            // header + up to 3 matches (grid)
                 holder.commentView.ellipsize = android.text.TextUtils.TruncateAt.END
             } else {
                 holder.root.orientation = LinearLayout.HORIZONTAL
@@ -536,7 +543,7 @@ class GalleryActivity : AppCompatActivity() {
                 holder.textView.gravity = android.view.Gravity.START
                 holder.textView.maxLines = Int.MAX_VALUE
                 holder.commentView.gravity = android.view.Gravity.START
-                holder.commentView.maxLines = 3
+                holder.commentView.maxLines = 5   // header + up to 3 matches show fully in the list
                 holder.commentView.ellipsize = android.text.TextUtils.TruncateAt.END
             }
 
