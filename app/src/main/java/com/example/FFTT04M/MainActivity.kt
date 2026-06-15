@@ -718,6 +718,20 @@ class MainActivity : AppCompatActivity() {
     override fun onResume() {
         super.onResume()
         updateBackgroundButton()   // toggle reflects the service's actual state on return
+        // Privacy: the live mic runs ONLY while the Listen screen is in the foreground. Resume it on
+        // return (unless the user's authorized background CoughCaptureService owns the mic).
+        if (!CoughCaptureService.running &&
+            ActivityCompat.checkSelfPermission(this, Manifest.permission.RECORD_AUDIO) == PackageManager.PERMISSION_GRANTED) {
+            startRecording()
+        }
+    }
+
+    override fun onStop() {
+        super.onStop()
+        // Privacy: never keep capturing once this screen isn't visible (on API < 28 a backgrounded
+        // AudioRecord would otherwise capture REAL audio). The only sanctioned background capture is
+        // the user-toggled, notification-backed CoughCaptureService — leave that one running.
+        stopRecording()
     }
 
     private fun startRecording() {
