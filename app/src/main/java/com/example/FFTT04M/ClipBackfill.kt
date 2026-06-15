@@ -23,21 +23,29 @@ object ClipBackfill {
         running = true
         var icons = 0; var comments = 0; var failed = 0
         val t0 = System.currentTimeMillis()
+        // One-time content upgrade (old single-line auto-match → top-3+confidence) requires reading
+        // every .txt — slow. After one full pass we set this flag, so steady-state opens only do cheap
+        // exists() checks for genuinely new clips (missing .txt/.png), not a full re-read each time.
+        val prefs = ctx.getSharedPreferences("app_settings", android.content.Context.MODE_PRIVATE)
+        val upgraded = prefs.getBoolean("clip_match_upgraded_v2", false)
         try {
             val dir = GalleryTransfer.recordingsDir(ctx) ?: ctx.filesDir
             val wavs = dir.listFiles { f -> f.isFile && f.extension.equals("wav", true) }
                 ?: return
-            android.util.Log.i("FFTT04M", "ClipBackfill: scanning ${wavs.size} clips in ${dir.absolutePath}")
+            android.util.Log.i("FFTT04M", "ClipBackfill: scanning ${wavs.size} clips (upgraded=$upgraded)")
             for (wav in wavs) {
                 val base = wav.nameWithoutExtension
                 val png = File(dir, "$base.png")
                 val txt = File(dir, "$base.txt")
                 val needIcon = !png.exists()
-                // Comment needed if missing OR an OLD single-line auto-match to upgrade to top-3.
-                // (A user comment, or one already in top-N format, is left alone — no re-analysis.)
-                val existing = if (txt.exists()) runCatching { txt.readText() }.getOrNull() else null
-                val needComment = existing == null ||
-                    (existing.startsWith("auto-match") && !existing.contains("conf "))
+                // After the one-time upgrade, only a MISSING .txt needs work (cheap). Before it, also
+                // read content to upgrade old auto-match comments (skips user comments / current ones).
+                val needComment = if (upgraded) {
+                    !txt.exists()
+                } else {
+                    val existing = if (txt.exists()) runCatching { txt.readText() }.getOrNull() else null
+                    existing == null || (existing.startsWith("auto-match") && !existing.contains("conf "))
+                }
                 if (!needIcon && !needComment) continue
                 val data = try { WavReader.read(wav) } catch (e: Throwable) {
                     failed++; android.util.Log.w("FFTT04M", "ClipBackfill: read failed ${wav.name}: ${e.message}"); continue
@@ -58,6 +66,8 @@ object ClipBackfill {
                 }
                 if (changed) onProgress?.invoke()
             }
+            // Full pass completed: future opens skip the per-clip content re-read.
+            if (!upgraded) prefs.edit().putBoolean("clip_match_upgraded_v2", true).apply()
         } catch (e: Throwable) {
             android.util.Log.w("FFTT04M", "ClipBackfill aborted: ${e.message}")
         } finally {
