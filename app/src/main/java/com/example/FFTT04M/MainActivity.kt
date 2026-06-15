@@ -92,6 +92,10 @@ class MainActivity : AppCompatActivity() {
     private var selectedDevice: AudioDeviceInfo? = null
     private var availableDevices = mutableListOf<AudioDeviceInfo>()
     private var audioDeviceCallback: AudioDeviceCallback? = null
+    // True while we rebuild the spinner programmatically (hot-plug refresh). Setting an adapter posts
+    // a spurious onItemSelected(0) that would otherwise clobber the persisted mic_device with the
+    // default — so the listener ignores selections while this is set. Cleared after the async event.
+    private var suppressMicCallback = false
     private var isCalibrating = false
     @Volatile private var latestFrameEnergy = 0f
 
@@ -525,6 +529,9 @@ class MainActivity : AppCompatActivity() {
         val deviceNames = devices.map { it.productName.toString() + " (" + getDeviceTypeName(it.type) + ")" }
         val adapter = ArrayAdapter(this, R.layout.spinner_item_orange, deviceNames)
         adapter.setDropDownViewResource(android.R.layout.simple_spinner_dropdown_item)
+        // Ignore the programmatic selection storm (adapter swap + setSelection) so it can't overwrite
+        // the user's persisted mic choice; re-enabled after the posted events have drained.
+        suppressMicCallback = true
         spinner.adapter = adapter
 
         // Restore the globally-persisted mic choice before attaching the listener, so re-selecting it
@@ -541,7 +548,7 @@ class MainActivity : AppCompatActivity() {
 
         spinner.onItemSelectedListener = object : AdapterView.OnItemSelectedListener {
             override fun onItemSelected(parent: AdapterView<*>?, view: View?, position: Int, id: Long) {
-                if (isCalibrating) return
+                if (isCalibrating || suppressMicCallback) return
                 val newDevice = devices[position]
                 if (newDevice != selectedDevice) {
                     selectedDevice = newDevice
@@ -552,6 +559,8 @@ class MainActivity : AppCompatActivity() {
             }
             override fun onNothingSelected(parent: AdapterView<*>?) {}
         }
+        // Clear the guard only after the spinner's queued selection callbacks have run.
+        spinner.post { suppressMicCallback = false }
     }
 
     private fun getDeviceTypeName(type: Int): String {

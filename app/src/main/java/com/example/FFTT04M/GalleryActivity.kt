@@ -43,6 +43,13 @@ class GalleryActivity : AppCompatActivity() {
     private var isGridView = false
     private var files = mutableListOf<File>()
 
+    private val galleryPrefs by lazy { getSharedPreferences("app_settings", MODE_PRIVATE) }
+    // #4b gallery memory: the recording the user last opened (highlighted on return), the newest
+    // recording we've seen (to detect a fresh acquisition), and a one-shot "flash this item" name.
+    private var lastSelectedName: String? = null
+    private var lastAcquiredName: String? = null
+    private var flashName: String? = null
+
     // Scanner result (receiver side): a Wi-Fi (FFTT1) or Bluetooth (FFTTBT) handshake.
     private val scanLauncher = registerForActivityResult(ScanContract()) { result ->
         result.contents?.let { handleScanned(it) }
@@ -178,6 +185,7 @@ class GalleryActivity : AppCompatActivity() {
 
         val prefs = getSharedPreferences("app_settings", MODE_PRIVATE)
         isGridView = prefs.getBoolean("gallery_is_grid", false)
+        lastSelectedName = prefs.getString("gallery_last_selected", null)
 
         recyclerView = findViewById(R.id.recyclerView)
         btnViewToggle = findViewById(R.id.btnViewToggle)
