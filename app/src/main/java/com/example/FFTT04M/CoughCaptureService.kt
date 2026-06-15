@@ -150,8 +150,20 @@ class CoughCaptureService : Service() {
         val dir = GalleryTransfer.recordingsDir(this) ?: filesDir
         val wav = File(dir, "cough_$ts.wav")
         runCatching { CoughWav.write(wav, c.pcm, sampleRate) }
-        // Auto-label from the closest cough/non-cough DB match (off-thread; no-op if no bundled ref).
-        thread { runCatching { com.example.FFTT04M.cough.ClipMatcher.annotate(this, wav, c.pcm, sampleRate) } }
+        // Background captures write no live icon, so generate the FFT spectrogram thumbnail here, plus
+        // the closest-match label — both off-thread (no-op if a ref/icon already exists).
+        thread {
+            runCatching { com.example.FFTT04M.cough.ClipMatcher.annotate(this, wav, c.pcm, sampleRate) }
+            val png = File(dir, "cough_$ts.png")
+            if (!png.exists()) runCatching {
+                SpectrogramThumb.render(this, c.pcm, sampleRate)?.let { bmp ->
+                    java.io.FileOutputStream(png).use { bmp.compress(android.graphics.Bitmap.CompressFormat.PNG, 100, it) }
+                    bmp.recycle()
+                }
+            }
+            // Refresh an open Gallery once the icon/label exist.
+            runCatching { sendBroadcast(Intent(TransferService.ACTION_PROGRESS).setPackage(packageName)) }
+        }
         // Live-refresh an open Gallery (reuses the import service's broadcast that triggers loadFiles()).
         runCatching { sendBroadcast(Intent(TransferService.ACTION_PROGRESS).setPackage(packageName)) }
         count++

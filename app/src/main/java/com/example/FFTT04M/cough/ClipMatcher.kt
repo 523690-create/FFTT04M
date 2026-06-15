@@ -70,45 +70,67 @@ object ClipMatcher {
 
     data class Match(val label: String, val src: String, val distance: Double, val cough: Boolean)
 
-    /** Nearest reference for a clip's PCM, or null if unavailable / no analysable events. */
-    fun match(ctx: Context, pcm: FloatArray, sampleRate: Int): Match? {
-        ensureLoaded(ctx)
-        val mu = mean ?: return null
-        val sd = std ?: return null
-        if (refs.isEmpty() || mu.size != 21) return null
-        val a = try { analyzer.analyze(pcm, sampleRate) } catch (_: Throwable) { return null }
-        // Prefer cough-like events; fall back to all detected events.
-        val events = a.events.filter { it.speech.isLikelyCough }.ifEmpty { a.events }
-        if (events.isEmpty()) return null
-        var best: Ref? = null
-        var bestD = Double.MAX_VALUE
-        for (e in events) {
-            val z = CoughSimilarity.project(eventVector(e), mu, sd)
-            for (r in refs) {
-                if (r.v.size != z.size) continue
-                val d = CoughSimilarity.euclidean(z, r.v)
-                if (d < bestD) { bestD = d; best = r }
-            }
-        }
-        val r = best ?: return null
-        val label = listOf(r.sound, r.health)
+    private fun labelOf(r: Ref): String =
+        listOf(r.sound, r.health)
             .filter { it.isNotBlank() && !it.equals("na", true) }
             .joinToString(" / ")
             .ifBlank { if (r.cough) "cough" else "sound" }
-        return Match(label, r.src, bestD, r.cough)
+
+    /** Project a clip's cough-like (else all) events into the reference z-space; empty if none. */
+    private fun eventVectors(ctx: Context, pcm: FloatArray, sampleRate: Int): List<DoubleArray> {
+        ensureLoaded(ctx)
+        val mu = mean ?: return emptyList()
+        val sd = std ?: return emptyList()
+        if (refs.isEmpty() || mu.size != 21) return emptyList()
+        val a = try { analyzer.analyze(pcm, sampleRate) } catch (_: Throwable) { return emptyList() }
+        val events = a.events.filter { it.speech.isLikelyCough }.ifEmpty { a.events }
+        return events.map { CoughSimilarity.project(eventVector(it), mu, sd) }
     }
 
     /**
-     * Match [pcm] and, unless a comment already exists, write the result as the clip's `.txt`
-     * comment sidecar. Marked clearly as an automated guess (not ground truth), with the source and
-     * the distance so confidence is visible.
+     * Top [n] **distinct-label** nearest references for a clip (closest distance per label), best
+     * first. Distinct labels (vs. n raw neighbours) avoid three near-identical entries and give a
+     * more useful shortlist; the spread of distances indicates confidence.
+     */
+    fun matchTop(ctx: Context, pcm: FloatArray, sampleRate: Int, n: Int = 3): List<Match> {
+        val zs = eventVectors(ctx, pcm, sampleRate)
+        if (zs.isEmpty()) return emptyList()
+        val bestByLabel = HashMap<String, Match>()
+        for (r in refs) {
+            if (r.v.size != 21) continue
+            var dmin = Double.MAX_VALUE
+            for (z in zs) { val d = CoughSimilarity.euclidean(z, r.v); if (d < dmin) dmin = d }
+            val label = labelOf(r)
+            val cur = bestByLabel[label]
+            if (cur == null || dmin < cur.distance) bestByLabel[label] = Match(label, r.src, dmin, r.cough)
+        }
+        return bestByLabel.values.sortedBy { it.distance }.take(n)
+    }
+
+    /** Single nearest match (top of [matchTop]); kept for callers that want just one. */
+    fun match(ctx: Context, pcm: FloatArray, sampleRate: Int): Match? =
+        matchTop(ctx, pcm, sampleRate, 1).firstOrNull()
+
+    /**
+     * Match [pcm] and, unless a comment already exists, write the TOP-3 matches as the clip's `.txt`
+     * comment sidecar — an automated guess, not ground truth. Read the distances for confidence: a
+     * tight #1 well below #2/#3 is a confident match; clustered or all-large distances are unreliable.
      */
     fun annotate(ctx: Context, wav: File, pcm: FloatArray, sampleRate: Int) {
         val parent = wav.parentFile ?: return
         val txt = File(parent, wav.nameWithoutExtension + ".txt")
-        if (txt.exists()) return   // never clobber a user/existing comment
-        val m = match(ctx, pcm, sampleRate) ?: return
-        val line = String.format(Locale.US, "auto-match: ≈ %s  [%s, d=%.2f]", m.label, m.src, m.distance)
-        runCatching { txt.writeText(line) }
+        if (txt.exists()) {
+            val existing = runCatching { txt.readText() }.getOrNull() ?: return
+            if (!existing.startsWith("auto-match")) return        // user comment → never touch
+            if (existing.startsWith("auto-match (top")) return    // already top-N → one-time upgrade done
+            // else: an OLD single-line auto-match → upgrade it to top-3 below
+        }
+        val top = matchTop(ctx, pcm, sampleRate, 3)
+        if (top.isEmpty()) return
+        val sb = StringBuilder("auto-match (top ${top.size}):")
+        top.forEachIndexed { i, m ->
+            sb.append(String.format(Locale.US, "\n  %d) %s  [%s, d=%.2f]", i + 1, m.label, m.src, m.distance))
+        }
+        runCatching { txt.writeText(sb.toString()) }
     }
 }

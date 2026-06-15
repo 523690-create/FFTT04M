@@ -30,7 +30,11 @@ object ClipBackfill {
                 val png = File(dir, "$base.png")
                 val txt = File(dir, "$base.txt")
                 val needIcon = !png.exists()
-                val needComment = !txt.exists()
+                // Comment needed if missing OR an OLD single-line auto-match to upgrade to top-3.
+                // (A user comment, or one already in top-N format, is left alone — no re-analysis.)
+                val existing = if (txt.exists()) runCatching { txt.readText() }.getOrNull() else null
+                val needComment = existing == null ||
+                    (existing.startsWith("auto-match") && !existing.startsWith("auto-match (top"))
                 if (!needIcon && !needComment) continue
                 val data = try { WavReader.read(wav) } catch (_: Throwable) { continue }
                 var changed = false
