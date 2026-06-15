@@ -96,6 +96,9 @@ class MainActivity : AppCompatActivity() {
     // a spurious onItemSelected(0) that would otherwise clobber the persisted mic_device with the
     // default — so the listener ignores selections while this is set. Cleared after the async event.
     private var suppressMicCallback = false
+    // Bluetooth SCO routes asynchronously: a capture started before the SCO link is up records from
+    // the built-in mic. We verify the routed device shortly after start and re-route ONCE if needed.
+    private var btRerouteAttempted = false
     private var isCalibrating = false
     @Volatile private var latestFrameEnergy = 0f
 
@@ -833,6 +836,36 @@ class MainActivity : AppCompatActivity() {
         // Auto-detect + auto-save coughs from the live mic (forest verdict via CoughClassifier).
         coughDetector = com.example.FFTT04M.cough.CoughDetector(sampleRate) { onAutoCough(it) }
         record.startRecording()
+
+        // Diagnostics: log the device audio is ACTUALLY captured from (vs. what the user picked). This
+        // is how to confirm the "shows BT connected but records from the built-in mic" symptom.
+        val routedNow = record.routedDevice
+        android.util.Log.i("FFTT04M",
+            "Capture routed to: ${routedNow?.productName} (type=${routedNow?.type}, id=${routedNow?.id}); " +
+            "selected=${selectedDevice?.productName}(${selectedDevice?.id}) btRoute=$btRoute")
+        if (btRoute) {
+            // SCO link may still be warming up; re-check once and restart capture if we landed on the
+            // wrong (built-in) input so the AudioRecord re-binds to the now-connected BT mic.
+            val am = audioManager
+            val want = selectedDevice
+            Handler(Looper.getMainLooper()).postDelayed({
+                val rec = audioRecord ?: return@postDelayed
+                val routed = rec.routedDevice
+                val onBt = routed != null && routed.id == want?.id
+                android.util.Log.i("FFTT04M",
+                    "BT capture re-check: routed=${routed?.productName}(type=${routed?.type}) " +
+                    "commDevice=${if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.S) am.communicationDevice?.productName else "n/a"} onBt=$onBt")
+                if (!onBt && !btRerouteAttempted && recording.get() && selectedDevice?.id == want?.id) {
+                    btRerouteAttempted = true
+                    android.util.Log.w("FFTT04M", "BT mic not yet routed (SCO warm-up) — restarting capture once")
+                    restartRecording()
+                } else {
+                    btRerouteAttempted = false   // settled (on BT, or gave up) — allow a future attempt
+                }
+            }, 1200)
+        } else {
+            btRerouteAttempted = false
+        }
 
         recordingThread = Thread {
             val audioBuffer = FloatArray(stepSize)
