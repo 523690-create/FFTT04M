@@ -148,7 +148,10 @@ class CoughCaptureService : Service() {
         val now = Date()
         val ts = SimpleDateFormat("yyyyMMdd_HHmmss_SSS", Locale.US).format(now)
         val dir = GalleryTransfer.recordingsDir(this) ?: filesDir
-        runCatching { CoughWav.write(File(dir, "cough_$ts.wav"), c.pcm, sampleRate) }
+        val wav = File(dir, "cough_$ts.wav")
+        runCatching { CoughWav.write(wav, c.pcm, sampleRate) }
+        // Auto-label from the closest cough/non-cough DB match (off-thread; no-op if no bundled ref).
+        thread { runCatching { com.example.FFTT04M.cough.ClipMatcher.annotate(this, wav, c.pcm, sampleRate) } }
         // Live-refresh an open Gallery (reuses the import service's broadcast that triggers loadFiles()).
         runCatching { sendBroadcast(Intent(TransferService.ACTION_PROGRESS).setPackage(packageName)) }
         count++

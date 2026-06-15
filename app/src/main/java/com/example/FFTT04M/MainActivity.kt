@@ -986,6 +986,8 @@ class MainActivity : AppCompatActivity() {
             icon?.let { bmp -> runCatching {
                 java.io.FileOutputStream(png).use { bmp.compress(android.graphics.Bitmap.CompressFormat.PNG, 100, it) }
             } }
+            // Auto-label from the closest cough/non-cough DB match (no-op if no bundled ref).
+            runCatching { com.example.FFTT04M.cough.ClipMatcher.annotate(this, wav, c.pcm, sampleRate) }
         }
         runOnUiThread { flashCoughSaved(autoCoughCount) }
     }
