@@ -95,7 +95,9 @@ class MainActivity : AppCompatActivity() {
     // True while we rebuild the spinner programmatically (hot-plug refresh). Setting an adapter posts
     // a spurious onItemSelected(0) that would otherwise clobber the persisted mic_device with the
     // default — so the listener ignores selections while this is set. Cleared after the async event.
-    private var suppressMicCallback = false
+    // True only after a real touch on the mic spinner, so programmatic selections (adapter swap,
+    // setSelection, auto-position-0 on device removal) don't persist/restart and clobber the choice.
+    private var userTouchedSpinner = false
     // Bluetooth SCO routes asynchronously: a capture started before the SCO link is up records from
     // the built-in mic. We verify the routed device shortly after start and re-route ONCE if needed.
     private var btRerouteAttempted = false
@@ -541,13 +543,10 @@ class MainActivity : AppCompatActivity() {
         val deviceNames = devices.map { it.productName.toString() + " (" + getDeviceTypeName(it.type) + ")" }
         val adapter = ArrayAdapter(this, R.layout.spinner_item_orange, deviceNames)
         adapter.setDropDownViewResource(android.R.layout.simple_spinner_dropdown_item)
-        // Ignore the programmatic selection storm (adapter swap + setSelection) so it can't overwrite
-        // the user's persisted mic choice; re-enabled after the posted events have drained.
-        suppressMicCallback = true
         spinner.adapter = adapter
 
-        // Restore the globally-persisted mic choice before attaching the listener, so re-selecting it
-        // doesn't trigger a spurious restart (selectedDevice already matches).
+        // Restore the globally-persisted mic choice; setSelection here is programmatic (no touch) so
+        // the listener below ignores it and won't clobber the saved choice.
         val savedName = prefs.getString("mic_device", null)
         if (savedName != null) {
             val idx = deviceNames.indexOf(savedName)
@@ -558,9 +557,15 @@ class MainActivity : AppCompatActivity() {
             }
         }
 
+        // Touch-based guard: a spinner fires onItemSelected for programmatic changes too (adapter swap,
+        // setSelection, auto-position-0 after a device removal). Those were overwriting the persisted
+        // mic with the built-in default, so a reconnected mic couldn't be reacquired. Only a real TAP
+        // sets userTouchedSpinner, so only a genuine user choice persists / restarts.
+        spinner.setOnTouchListener { _, _ -> userTouchedSpinner = true; false }
         spinner.onItemSelectedListener = object : AdapterView.OnItemSelectedListener {
             override fun onItemSelected(parent: AdapterView<*>?, view: View?, position: Int, id: Long) {
-                if (isCalibrating || suppressMicCallback) return
+                if (isCalibrating || !userTouchedSpinner) return
+                userTouchedSpinner = false
                 val newDevice = devices[position]
                 if (newDevice != selectedDevice) {
                     selectedDevice = newDevice
@@ -571,8 +576,6 @@ class MainActivity : AppCompatActivity() {
             }
             override fun onNothingSelected(parent: AdapterView<*>?) {}
         }
-        // Clear the guard only after the spinner's queued selection callbacks have run.
-        spinner.post { suppressMicCallback = false }
     }
 
     private fun getDeviceTypeName(type: Int): String {
