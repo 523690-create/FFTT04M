@@ -1098,15 +1098,26 @@ class MainActivity : AppCompatActivity() {
      *    transition from "default" back to a real device and restart capture on it.
      */
     private fun handleDevicesChanged() {
-        // Ignore device churn we caused ourselves: an intentional restart transiently clears the SCO
-        // device, and a backgrounded screen tears capture down — neither is a real user disconnect.
-        if (btRestarting || !isForeground) return
+        // Don't manage the mic while backgrounded (privacy / the background service owns it). We do NOT
+        // bail on btRestarting here — that would swallow real reconnects (the reacquire regression);
+        // btRestarting is only used below to suppress the FALSE disconnect from our own SCO teardown.
+        if (!isForeground) return
         val audioManager = getSystemService(AUDIO_SERVICE) as AudioManager
         availableDevices = audioManager.getDevices(AudioManager.GET_DEVICES_INPUTS).toMutableList()
+        android.util.Log.i("FFTT04M", "devices changed: [" +
+            availableDevices.joinToString { "${it.productName}/${getDeviceTypeName(it.type)}#${it.id}" } +
+            "] selected=${selectedDevice?.productName}#${selectedDevice?.id} btRestarting=$btRestarting")
 
         val activeId = selectedDevice?.id
-        // Active mic vanished → drop the dead handle (but not the persisted name) and use the default.
+        // Active mic vanished:
         if (activeId != null && availableDevices.none { it.id == activeId }) {
+            if (btRestarting) {
+                // Our own restart transiently dropped the SCO device — NOT a real unplug. Refresh the
+                // spinner but keep the selection so it reattaches when the device re-appears.
+                setupMicSpinnerWithDevices(availableDevices)
+                return
+            }
+            // Real disconnect → drop the dead handle (keep the persisted name) and use the default.
             val name = selectedDevice?.productName?.toString() ?: "the selected mic"
             selectedDevice = null
             setupMicSpinnerWithDevices(availableDevices)
@@ -1120,6 +1131,7 @@ class MainActivity : AppCompatActivity() {
         val before = selectedDevice
         setupMicSpinnerWithDevices(availableDevices)
         if (before == null && selectedDevice != null) {     // chosen mic just came back
+            android.util.Log.i("FFTT04M", "reacquired mic ${selectedDevice?.productName}#${selectedDevice?.id}")
             restartRecording()
             Toast.makeText(this, "Reacquired mic \"${selectedDevice?.productName}\"", Toast.LENGTH_SHORT).show()
         }
