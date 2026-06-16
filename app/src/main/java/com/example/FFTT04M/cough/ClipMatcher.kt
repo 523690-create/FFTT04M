@@ -92,9 +92,14 @@ object ClipMatcher {
         val mu = mean ?: return emptyList()
         val sd = std ?: return emptyList()
         if (refs.isEmpty() || mu.size != 21) return emptyList()
-        val a = try { analyzer.analyze(pcm, sampleRate) } catch (_: Throwable) { return emptyList() }
-        val events = a.events.filter { it.speech.isLikelyCough }.ifEmpty { a.events }
-        return events.map { CoughSimilarity.project(eventVector(it), mu, sd) }
+        val a = try { analyzer.analyze(pcm, sampleRate) } catch (_: Throwable) { null }
+        val events = a?.events?.filter { it.speech.isLikelyCough }?.ifEmpty { a.events } ?: emptyList()
+        if (events.isNotEmpty()) return events.map { CoughSimilarity.project(eventVector(it), mu, sd) }
+        // Fallback: no segment found (pre-trimmed capture) — match the whole clip as one window so it
+        // still gets a (likely lower-confidence) result instead of no comment at all.
+        val whole = try { analyzer.wholeClipFeatureVector(pcm, sampleRate) } catch (_: Throwable) { null }
+            ?: return emptyList()
+        return listOf(CoughSimilarity.project(whole, mu, sd))
     }
 
     /**

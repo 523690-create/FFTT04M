@@ -39,4 +39,24 @@ class CoughAnalyzer(private val cfg: CoughAnalysisConfig = CoughAnalysisConfig()
         }
         return CoughAnalysis(sampleRate, x.size, events) to ridgePoints
     }
+
+    /**
+     * [8 DSP + 13 MFCC] feature vector computed over the WHOLE clip as one window — a fallback for
+     * matching when the segmenter finds no cough segment (common for pre-trimmed captures the capture
+     * detector saved but this analyzer won't split). Same layout/order as
+     * [CoughEvent.featureVector] + the 13 MFCC means. Null for an empty clip.
+     */
+    fun wholeClipFeatureVector(x: FloatArray, sampleRate: Int): DoubleArray? {
+        if (x.isEmpty()) return null
+        val fft = fftExtractor.extract(x, 0, x.size, sampleRate)
+        val ridge = ridgeExtractor.extract(x, 0, x.size, sampleRate).features
+        val mfcc = mfccExtractor.extract(x, 0, x.size, sampleRate)
+        val base = doubleArrayOf(
+            ridge.curvature, ridge.slope, ridge.centerFreqHz,
+            fft.durationSec, ridge.energy, ridge.bandwidthHz,
+            fft.qRatio, fft.fmaxHz,
+        )
+        val m = mfcc?.mean ?: DoubleArray(0)
+        return base + DoubleArray(13) { if (it < m.size) m[it] else 0.0 }
+    }
 }
