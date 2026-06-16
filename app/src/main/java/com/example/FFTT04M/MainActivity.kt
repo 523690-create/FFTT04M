@@ -851,10 +851,11 @@ class MainActivity : AppCompatActivity() {
                 if (minSize <= 0) continue
 
                 val bufSize = max(minSize, fftSize * (if (enc == AudioFormat.ENCODING_PCM_FLOAT) 4 else 2))
-                // BT must use VOICE_COMMUNICATION — it follows the communication device. MIC is a
-                // fallback; VOICE_RECOGNITION/UNPROCESSED prefer the built-in mic and ignore SCO.
+                // BT: with MODE_IN_COMMUNICATION + setCommunicationDevice active, MIC follows the SCO
+                // route and gives the raw mic. Try it FIRST — VOICE_COMMUNICATION's echo-canceller can
+                // gate to SILENCE over SCO (the solid-color FFT), so it's only the fallback now.
                 val sources = if (btRoute)
-                    intArrayOf(MediaRecorder.AudioSource.VOICE_COMMUNICATION, MediaRecorder.AudioSource.MIC)
+                    intArrayOf(MediaRecorder.AudioSource.MIC, MediaRecorder.AudioSource.VOICE_COMMUNICATION)
                 else MicSource.sources(this@MainActivity)   // UNPROCESSED when trusted, else MIC
 
                 for (src in sources) {
@@ -930,7 +931,8 @@ class MainActivity : AppCompatActivity() {
                 val onBt = routed != null && routed.id == want?.id
                 android.util.Log.i("FFTT04M",
                     "BT capture re-check: routed=${routed?.productName}(type=${routed?.type}) " +
-                    "commDevice=${if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.S) am.communicationDevice?.productName else "n/a"} onBt=$onBt")
+                    "commDevice=${if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.S) am.communicationDevice?.productName else "n/a"} " +
+                    "onBt=$onBt lastFrameEnergy=${"%.4f".format(latestFrameEnergy)} (≈0 = silent capture)")
                 if (!onBt && !btRerouteAttempted && recording.get() && selectedDevice?.id == want?.id) {
                     btRerouteAttempted = true
                     android.util.Log.w("FFTT04M", "BT mic not yet routed (SCO warm-up) — restarting capture once")
