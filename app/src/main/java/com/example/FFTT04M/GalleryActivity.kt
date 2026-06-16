@@ -532,8 +532,8 @@ class GalleryActivity : AppCompatActivity() {
                 holder.textView.maxLines = 1
                 holder.textView.ellipsize = android.text.TextUtils.TruncateAt.END
                 holder.commentView.gravity = android.view.Gravity.START   // multi-line top-3 reads left-aligned
-                holder.commentView.maxLines = 4                            // header + up to 3 matches (grid)
-                holder.commentView.ellipsize = android.text.TextUtils.TruncateAt.END
+                holder.commentView.maxLines = Int.MAX_VALUE               // show the full comment; never truncate
+                holder.commentView.ellipsize = null
             } else {
                 holder.root.orientation = LinearLayout.HORIZONTAL
                 boxParams.width = 0

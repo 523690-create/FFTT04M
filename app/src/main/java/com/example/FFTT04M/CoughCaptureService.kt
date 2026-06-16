@@ -59,6 +59,7 @@ class CoughCaptureService : Service() {
         createChannel()
         startForegroundCompat("Listening for coughs… (0 saved)")
         running = true
+        AudioOutputMonitor.start(this)   // suspend capture whenever the device is playing audio output
         // Sticky ACTION_BATTERY_CHANGED → current state immediately; receiver handles changes.
         val sticky = try { registerReceiver(batteryReceiver, IntentFilter(Intent.ACTION_BATTERY_CHANGED)) }
                      catch (_: Throwable) { null }
@@ -128,7 +129,7 @@ class CoughCaptureService : Service() {
             while (capturing) {
                 val n = recorder.read(shortBuf, 0, shortBuf.size)
                 if (n <= 0) continue
-                if (playbackActive) continue   // drain but don't analyse our own playback
+                if (playbackActive || AudioOutputMonitor.active) continue   // don't record our own playback / chimes / BT-transfer sounds
                 for (i in 0 until n) floatBuf[i] = shortBuf[i] / 32768f
                 try { detector.process(if (n == floatBuf.size) floatBuf else floatBuf.copyOf(n)) }
                 catch (t: Throwable) {                  // overload on a weak device → stop, don't crash
