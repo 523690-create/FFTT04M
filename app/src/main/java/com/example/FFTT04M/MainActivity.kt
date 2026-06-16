@@ -727,6 +727,15 @@ class MainActivity : AppCompatActivity() {
     override fun onResume() {
         super.onResume()
         isForeground = true
+        // Refresh the mic spinner so it reflects what's actually connected NOW — drops a mic unplugged
+        // while we were away (the stale-entry report) and surfaces newly connected ones.
+        runCatching {
+            availableDevices = (getSystemService(AUDIO_SERVICE) as AudioManager)
+                .getDevices(AudioManager.GET_DEVICES_INPUTS).toMutableList()
+            android.util.Log.i("FFTT04M", "onResume inputs: [" +
+                availableDevices.joinToString { "${it.productName}/${getDeviceTypeName(it.type)}#${it.id}" } + "]")
+            setupMicSpinnerWithDevices(availableDevices)
+        }
         // Returning to Listen ALWAYS resumes the live view (this is what was frozen when BACKGROUND
         // was on). startRecording takes the mic back from the background service for the live FFT.
         if (ActivityCompat.checkSelfPermission(this, Manifest.permission.RECORD_AUDIO) == PackageManager.PERMISSION_GRANTED) {

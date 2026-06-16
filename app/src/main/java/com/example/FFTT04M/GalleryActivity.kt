@@ -430,6 +430,7 @@ class GalleryActivity : AppCompatActivity() {
     override fun onStop() {
         super.onStop()
         runCatching { unregisterReceiver(importProgressReceiver) }
+        ClipBackfill.cancel()   // stop heavy backfill on leave so it can't pile onto Listen → LMK kill
     }
 
     private fun loadFiles() {
@@ -560,7 +561,9 @@ class GalleryActivity : AppCompatActivity() {
 
             val iconFile = File(file.parent, file.nameWithoutExtension + ".png")
             if (iconFile.exists()) {
-                val bitmap = BitmapFactory.decodeFile(iconFile.absolutePath)
+                // Downsample to ~half (256² → 128², the icon is shown at 64dp) to cut bitmap memory.
+                val opts = BitmapFactory.Options().apply { inSampleSize = 2 }
+                val bitmap = BitmapFactory.decodeFile(iconFile.absolutePath, opts)
                 holder.imageView.setImageBitmap(bitmap)
             } else {
                 holder.imageView.setImageResource(android.R.drawable.ic_menu_report_image)

@@ -17,10 +17,16 @@ import java.io.FileOutputStream
 object ClipBackfill {
 
     @Volatile private var running = false
+    @Volatile private var cancelled = false
+
+    /** Stop an in-flight backfill (call when leaving the gallery) so its per-clip wav-read + analyze +
+     *  bitmap work doesn't pile on top of Listen's allocations and get the process LMK-killed. */
+    fun cancel() { cancelled = true }
 
     fun run(ctx: Context, onProgress: (() -> Unit)? = null) {
         if (running) return
         running = true
+        cancelled = false
         var icons = 0; var comments = 0; var failed = 0
         val t0 = System.currentTimeMillis()
         // One-time content upgrade (old single-line auto-match → top-3+confidence) requires reading
@@ -41,6 +47,7 @@ object ClipBackfill {
             }
             android.util.Log.i("FFTT04M", "ClipBackfill: scanning ${wavs.size} clips (upgraded=$upgraded)")
             for (wav in wavs) {
+                if (cancelled) { android.util.Log.i("FFTT04M", "ClipBackfill cancelled (left gallery)"); break }
                 val base = wav.nameWithoutExtension
                 val png = File(dir, "$base.png")
                 val txt = File(dir, "$base.txt")
@@ -73,8 +80,8 @@ object ClipBackfill {
                 }
                 if (changed) onProgress?.invoke()
             }
-            // Full pass completed: future opens skip the per-clip content re-read.
-            if (!upgraded) prefs.edit().putBoolean("clip_match_upgraded_v2", true).apply()
+            // Only mark the upgrade done after a COMPLETE (non-cancelled) pass.
+            if (!upgraded && !cancelled) prefs.edit().putBoolean("clip_match_upgraded_v2", true).apply()
         } catch (e: Throwable) {
             android.util.Log.w("FFTT04M", "ClipBackfill aborted: ${e.message}")
         } finally {
