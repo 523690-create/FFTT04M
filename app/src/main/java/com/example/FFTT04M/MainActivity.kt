@@ -64,6 +64,12 @@ class MainActivity : AppCompatActivity() {
     private var micAndColorLayout: View? = null
     private var eqSlidersLayout: View? = null
     private var filterControlsLayout: View? = null
+    // Equalizer mode: AUTO = band-AGC de-tilt drives the scroll (sliders grayed, yellow overlay shows
+    // the live per-band gain); MANUAL = the 5 biquad sliders shape the scroll and AGC is bypassed.
+    private var eqAuto = true
+    private var btnEqMode: Button? = null
+    private var agcOverlay: AgcBarsOverlay? = null
+    @Volatile private var agcOverlayLevels: FloatArray? = null
     private var sliderNoiseFilter: Slider? = null
     private var sliderNoiseRise: Slider? = null
     private var sliderNoiseFall: Slider? = null
@@ -111,6 +117,31 @@ class MainActivity : AppCompatActivity() {
     private var backgroundDesired = false
     private var isCalibrating = false
     @Volatile private var latestFrameEnergy = 0f
+
+    // Band-specific adaptive display gain (AGC) for the FFT scroll. The spectrum is split into
+    // AGC_BANDS log-spaced frequency bands; each band's color-scale ceiling tracks the MAX over a
+    // ~500 ms trailing window (per band), eased by a one-pole smoother. Benefits:
+    //   • flattens the natural low-freq-loud / high-freq-quiet tilt (auto manual-EQ) — each band
+    //     normalizes to its own level, so highs get boosted into visible color;
+    //   • reveals within-spectrum structure on clipped/over-gained input (BT SCO) instead of a
+    //     single solid hue;
+    //   • the 500 ms window forgets transients (a plug/unplug pop no longer pins the gain and blacks
+    //     out the scroll for seconds), so it self-recovers in ≤500 ms without a manual mic reselect.
+    // Per-bin ceilings are interpolated between band centers so there's no horizontal banding.
+    private companion object {
+        const val AGC_BANDS = 10             // log-spaced frequency bands, each gain-normalized on its own
+        const val AGC_WINDOW_MS = 500f       // ceiling = max over this trailing window (forgets transients)
+        const val AGC_SMOOTH_MS = 150f       // one-pole easing on each band ceiling (no hard steps/pumping)
+        // De-tilt aims each band's dominant energy at GREEN (mid-LUT) rather than red: a band's ceiling
+        // maps to AGC_GREEN_TARGET and AGC_SPREAD_DB sets how fast it falls to blue below / rises above.
+        const val AGC_GREEN_TARGET = 0.5f    // Turbo green sits at ~0.5; band's loudest level lands here
+        const val AGC_SPREAD_DB = 50f        // dB that spans the full color range around the green target
+        // Global signal gate (so per-band untilt only kicks in when there's actual signal, else dark):
+        const val AGC_SIGNAL_DB = -25f       // global loudest-band level at/above which we FULLY untilt
+        const val AGC_SILENCE_DB = -58f      // global level at/below which display stays dark (no untilt)
+        const val AGC_SILENCE_CEIL_DB = -15f // fixed ceiling used when silent → keeps the noise floor black
+        const val AGC_MAX_TILT_DB = 48f      // cap on per-band boost (stops a dead band lighting up mid-signal)
+    }
 
     private var audioBufferSize = sampleRate * 3
     private var audioCircularBuffer = FloatArray(audioBufferSize)
@@ -194,7 +225,8 @@ class MainActivity : AppCompatActivity() {
         fftHeatMap.setParams(fftSize, sampleRate.toFloat(), stepSize)
         
         setupEqSliders()
-        
+        setupEqModeToggle()
+
         val isLandscape = resources.configuration.orientation == Configuration.ORIENTATION_LANDSCAPE
         if (!isLandscape) {
             setupNoiseFilter()
@@ -536,10 +568,14 @@ class MainActivity : AppCompatActivity() {
         s?.post { (s.selectedView as? TextView)?.let { it.setMaxTextSizeToFit(it.text.toString()) } }
     }
 
-    private fun setupMicSpinnerWithDevices(devices: List<AudioDeviceInfo>) {
+    private fun setupMicSpinnerWithDevices(rawDevices: List<AudioDeviceInfo>) {
         val spinner = micSpinner ?: return
         if (resources.configuration.orientation == Configuration.ORIENTATION_LANDSCAPE) return
 
+        // Collapse duplicate spinner entries: a phone reports several built-in mics (front/back/etc.)
+        // with the same "<phone> (Built-in Mic)" label, plus "Other" duplicates. Keep the first of
+        // each display name so the spinner shows one entry per distinct mic.
+        val devices = rawDevices.distinctBy { it.productName.toString() + " (" + getDeviceTypeName(it.type) + ")" }
         val deviceNames = devices.map { it.productName.toString() + " (" + getDeviceTypeName(it.type) + ")" }
         val adapter = ArrayAdapter(this, R.layout.spinner_item_orange, deviceNames)
         adapter.setDropDownViewResource(android.R.layout.simple_spinner_dropdown_item)
@@ -596,17 +632,13 @@ class MainActivity : AppCompatActivity() {
      * before SCO, so they appear in the spinner; selecting one starts SCO in startRecording.
      */
     private fun enumerateInputs(am: AudioManager): MutableList<AudioDeviceInfo> {
-        val list = am.getDevices(AudioManager.GET_DEVICES_INPUTS).toMutableList()
-        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.S) {
-            // The input-list BT entry has a DIFFERENT id than the comm-device one and is NOT valid for
-            // setCommunicationDevice() — selecting it can't start SCO. Replace any input-list BT with
-            // the comm-device version, which IS routable, so the BT mic is both visible AND recordable.
-            list.removeAll { it.type == AudioDeviceInfo.TYPE_BLUETOOTH_SCO || it.type == AudioDeviceInfo.TYPE_BLE_HEADSET }
-            for (d in am.availableCommunicationDevices) {
-                if (d.type == AudioDeviceInfo.TYPE_BLUETOOTH_SCO || d.type == AudioDeviceInfo.TYPE_BLE_HEADSET) list.add(d)
-            }
-        }
-        return list
+        // Bluetooth (SCO/BLE) mic capture is intentionally EXCLUDED: the SCO uplink on tested headsets
+        // delivers hard-clipped, over-gained 16 kHz audio (solid/flat FFT) that's useless for spectral
+        // cough analysis, and MODE_IN_COMMUNICATION + setCommunicationDevice churn is unstable. So the
+        // spinner only ever offers wired / USB / built-in mics. (BT is still fine for file transfer.)
+        return am.getDevices(AudioManager.GET_DEVICES_INPUTS)
+            .filter { it.type != AudioDeviceInfo.TYPE_BLUETOOTH_SCO && it.type != AudioDeviceInfo.TYPE_BLE_HEADSET }
+            .toMutableList()
     }
 
     private fun Slider.setSafeValue(v: Float) {
@@ -640,6 +672,39 @@ class MainActivity : AppCompatActivity() {
                 updateLabelPosition(s, valueTxt)
             }
         }
+    }
+
+    /** "Equalizer: AUTO | MANUAL" toggle above the LATENCY/COLOR corner. */
+    private fun setupEqModeToggle() {
+        btnEqMode = findViewById(R.id.btnEqMode)
+        agcOverlay = findViewById(R.id.agcOverlay)
+        agcOverlay?.levelsProvider = { agcOverlayLevels }
+        eqAuto = prefs.getBoolean("eq_mode_auto", true)
+        btnEqMode?.setOnClickListener {
+            eqAuto = !eqAuto
+            prefs.edit { putBoolean("eq_mode_auto", eqAuto) }
+            applyEqMode()
+        }
+        applyEqMode()
+    }
+
+    /** Reflect [eqAuto] in the UI: gray + disable the manual sliders and show the live yellow AGC
+     *  overlay in AUTO; restore the sliders (and hide the overlay) in MANUAL. */
+    private fun applyEqMode() {
+        btnEqMode?.text = if (eqAuto) "EQ: AUTO" else "EQ: MANUAL"
+        btnEqMode?.backgroundTintList =
+            android.content.res.ColorStateList.valueOf(if (eqAuto) 0xFFFFD700.toInt() else 0xFF00FF00.toInt())
+        // Keep the EQ sliders green, just fade them way down + disable in AUTO (so the yellow overlay
+        // reads as the active layer). MANUAL restores full opacity.
+        val sliderIds = intArrayOf(R.id.eq100, R.id.eq300, R.id.eq1k, R.id.eq3k, R.id.eq8k)
+        val valueTxtIds = intArrayOf(R.id.txtEqValue100, R.id.txtEqValue300, R.id.txtEqValue1k, R.id.txtEqValue3k, R.id.txtEqValue8k)
+        for (id in sliderIds) findViewById<Slider>(id)?.apply {
+            isEnabled = !eqAuto
+            alpha = if (eqAuto) 0.2f else 1f
+        }
+        for (id in valueTxtIds) findViewById<TextView>(id)?.alpha = if (eqAuto) 0.2f else 1f
+        agcOverlay?.visibility = if (eqAuto) View.VISIBLE else View.GONE
+        if (!eqAuto) agcOverlayLevels = null
     }
 
     private fun setupNoiseFilter() {
@@ -851,9 +916,11 @@ class MainActivity : AppCompatActivity() {
                 if (minSize <= 0) continue
 
                 val bufSize = max(minSize, fftSize * (if (enc == AudioFormat.ENCODING_PCM_FLOAT) 4 else 2))
-                // BT: with MODE_IN_COMMUNICATION + setCommunicationDevice active, MIC follows the SCO
-                // route and gives the raw mic. Try it FIRST — VOICE_COMMUNICATION's echo-canceller can
-                // gate to SILENCE over SCO (the solid-color FFT), so it's only the fallback now.
+                // BT SCO source: all three are degraded on tested headset (soundcore Life Q20) because
+                // the SCO uplink AGC over MODE_IN_COMMUNICATION is maxed and CLIPS at the source —
+                // VOICE_COMMUNICATION mutes (AEC), VOICE_RECOGNITION clips hardest (RMS 0.62/9% railed),
+                // MIC clips least (RMS 0.42/5% railed). MIC is the least-bad; clipping is unrecoverable
+                // in software. BT SCO is fine for presence detection, not for spectral analysis.
                 val sources = if (btRoute)
                     intArrayOf(MediaRecorder.AudioSource.MIC, MediaRecorder.AudioSource.VOICE_COMMUNICATION)
                 else MicSource.sources(this@MainActivity)   // UNPROCESSED when trusted, else MIC
@@ -952,6 +1019,32 @@ class MainActivity : AppCompatActivity() {
             val imag = FloatArray(fftSize)
             val shortBuffer = if (activeEncoding == AudioFormat.ENCODING_PCM_16BIT) ShortArray(stepSize) else null
 
+            // ---- Band-specific AGC state, sized to THIS session's fft/rate/hop (reset each capture) ----
+            val numBins = fftSize / 2
+            val bands = AGC_BANDS
+            val logLo = ln(1f)
+            val logHi = ln((numBins - 1).coerceAtLeast(2).toFloat())
+            val binBandLo = IntArray(numBins)   // lower band center for per-bin ceiling interpolation
+            val binBandHi = IntArray(numBins)   // upper band center
+            val binBandW = FloatArray(numBins)  // weight toward the upper center (0..1)
+            val binBandNear = IntArray(numBins) // nearest band, used to accumulate each band's max
+            for (k in 0 until numBins) {
+                val kk = k.coerceAtLeast(1).toFloat()
+                val pos = ((ln(kk) - logLo) / (logHi - logLo)).coerceIn(0f, 1f) * (bands - 1)
+                val lo = floor(pos).toInt().coerceIn(0, bands - 1)
+                binBandLo[k] = lo
+                binBandHi[k] = (lo + 1).coerceAtMost(bands - 1)
+                binBandW[k] = pos - lo
+                binBandNear[k] = pos.roundToInt().coerceIn(0, bands - 1)
+            }
+            val hopMs = (stepSize.toFloat() / activeRate.coerceAtLeast(1) * 1000f).coerceIn(1f, 250f)
+            val winLen = (AGC_WINDOW_MS / hopMs).roundToInt().coerceIn(1, 256)
+            val agcRing = Array(bands) { FloatArray(winLen) { -160f } }           // trailing per-band maxima (dB)
+            var agcRingIdx = 0
+            val agcBandCeil = FloatArray(bands) { -160f }                         // smoothed per-band ceiling
+            val agcBandMax = FloatArray(bands)                                    // this frame's per-band max
+            val agcSmooth = 1f - exp(-hopMs / AGC_SMOOTH_MS)
+
             while (recording.get() && record?.recordingState == AudioRecord.RECORDSTATE_RECORDING) {
                 val read = if (activeEncoding == AudioFormat.ENCODING_PCM_FLOAT) {
                     record.read(audioBuffer, 0, stepSize, AudioRecord.READ_BLOCKING)
@@ -978,12 +1071,16 @@ class MainActivity : AppCompatActivity() {
                         coughDetector?.process(if (read == audioBuffer.size) audioBuffer.copyOf() else audioBuffer.copyOf(read))
                     }
 
-                    // EQ affects only the waterfall: run the biquads on the samples fed to the FFT.
-                    // (Run on every sample to keep the IIR state continuous.)
-                    for (i in 0 until read) {
-                        var s = audioBuffer[i]
-                        for (f in filters) s = f.process(s)
-                        audioBuffer[i] = s
+                    // EQ affects only the waterfall: in MANUAL mode run the biquads on the samples fed
+                    // to the FFT. In AUTO mode the band-AGC de-tilt does the shaping instead, so the
+                    // manual biquads are bypassed (sliders are grayed). (Run on every sample to keep
+                    // the IIR state continuous.)
+                    if (!eqAuto) {
+                        for (i in 0 until read) {
+                            var s = audioBuffer[i]
+                            for (f in filters) s = f.process(s)
+                            audioBuffer[i] = s
+                        }
                     }
 
                     System.arraycopy(fftInput, read, fftInput, 0, fftSize - read)
@@ -996,9 +1093,11 @@ class MainActivity : AppCompatActivity() {
 
                     FFTUtils.compute(real, imag)
 
-                    val magnitudes = FloatArray(fftSize / 2)
+                    val magnitudes = FloatArray(numBins)
                     var energy = 0f
-                    for (i in 0 until fftSize / 2) {
+                    agcBandMax.fill(-160f)
+                    // Pass 1: per-bin dB (after optional noise subtraction); track each band's max.
+                    for (i in 0 until numBins) {
                         var mag = sqrt(real[i] * real[i] + imag[i] * imag[i])
 
                         if (noiseFilterStrength > 0f) {
@@ -1016,9 +1115,52 @@ class MainActivity : AppCompatActivity() {
                         }
 
                         energy += mag
-                        magnitudes[i] = (20 * log10(mag + 1e-9f) + 80) / 80f
+                        val db = 20 * log10(mag + 1e-9f)
+                        magnitudes[i] = db                       // hold dB here; normalized in pass 2
+                        val b = binBandNear[i]
+                        if (db > agcBandMax[b]) agcBandMax[b] = db
                     }
                     latestFrameEnergy = energy
+
+                    if (eqAuto) {
+                        // Each band's ceiling = max over the trailing ~500 ms window (forgets transient
+                        // pops), eased by a one-pole smoother. No absolute floor here — the de-tilt comes
+                        // from normalizing every band to its OWN level so quiet (high-freq) bands fill the
+                        // colors too. Silence is handled separately by a GLOBAL gate below.
+                        agcRingIdx = (agcRingIdx + 1) % winLen
+                        var gMax = -1e9f
+                        for (b in 0 until bands) {
+                            agcRing[b][agcRingIdx] = agcBandMax[b]
+                            var wmax = -160f
+                            for (j in 0 until winLen) if (agcRing[b][j] > wmax) wmax = agcRing[b][j]
+                            agcBandCeil[b] += (wmax - agcBandCeil[b]) * agcSmooth
+                            if (agcBandCeil[b] > gMax) gMax = agcBandCeil[b]
+                        }
+                        // Global signal gate: sig 0 (silent) → fixed dark window so noise stays black;
+                        // sig 1 (signal present) → full per-band untilt. Smoothly blended between, so the
+                        // scroll doesn't pop when a cough starts.
+                        val sig = ((gMax - AGC_SILENCE_DB) / (AGC_SIGNAL_DB - AGC_SILENCE_DB)).coerceIn(0f, 1f)
+                        val tiltFloorDb = gMax - AGC_MAX_TILT_DB   // a band can't boost further than this
+                        for (i in 0 until numBins) {
+                            val bandC = agcBandCeil[binBandLo[i]] * (1f - binBandW[i]) +
+                                        agcBandCeil[binBandHi[i]] * binBandW[i]
+                            val untilt = if (bandC > tiltFloorDb) bandC else tiltFloorDb
+                            val ceil = AGC_SILENCE_CEIL_DB + (untilt - AGC_SILENCE_CEIL_DB) * sig
+                            // Center the band's loudest level (ceil) on green; quieter → blue, louder → red.
+                            magnitudes[i] = (AGC_GREEN_TARGET + (magnitudes[i] - ceil) / AGC_SPREAD_DB)
+                                .coerceIn(0f, 1f)
+                        }
+                        // Yellow overlay = per-band de-tilt boost (how far each band sits below the loudest
+                        // band), scaled by the signal gate so the bars fall to zero in silence.
+                        agcOverlayLevels = FloatArray(bands) {
+                            (((gMax - agcBandCeil[it]) / AGC_MAX_TILT_DB) * sig).coerceIn(0f, 1f)
+                        }
+                    } else {
+                        // MANUAL: fixed -80..0 dB window so the user's biquad EQ curve is what they see.
+                        for (i in 0 until numBins) {
+                            magnitudes[i] = ((magnitudes[i] + 80f) / 80f).coerceIn(0f, 1f)
+                        }
+                    }
                     runOnUiThread { fftHeatMap.updateFFT(magnitudes) }
                 }
             }

@@ -293,67 +293,147 @@ class GalleryActivity : AppCompatActivity() {
 
             val path = dir?.absolutePath ?: "(unavailable)"
             val isPublic = GalleryTransfer.hasPublicStorageAccess(this)
+            android.util.Log.i("FFTT04M", "USB offer published: ${wavs.size} clip(s) in $path (public=$isPublic)")
             runOnUiThread {
-                val msgView = android.widget.TextView(this).apply {
-                    setPadding(56, 36, 56, 8); textSize = 14f
-                    text = buildString {
-                        append("Offering ${wavs.size} recordings + metadata to the desktop.\n\n")
-                        append("On the computer, open the FFTT04D Cough Analyzer and click \"Request from USB Device\".\n\n")
-                        append("Folder: $path")
-                        if (!isPublic) append("\n\nTip: grant \"All files access\" for reliable USB reads.")
-                        append("\n\n⏳ Waiting for the desktop to receive…")
+                // The desktop pushes the ack beside the offer it read — that's recordingsDir, but it may
+                // also be public storage. Watch BOTH so a legacy/app-private vs public mismatch can't hide it.
+                val publicAck = java.io.File(GalleryTransfer.publicDir(), "fftt_usb_ack.json")
+                val ackCandidates = listOfNotNull(ackFile, publicAck)
+                val started = System.currentTimeMillis()
+                var statusLine = "⏳ Waiting for the desktop to receive…"
+                val msgView = android.widget.TextView(this).apply { setPadding(56, 36, 56, 8); textSize = 14f }
+                fun render() {
+                    val elapsed = (System.currentTimeMillis() - started) / 1000
+                    msgView.text = buildString {
+                        append("Offering ${wavs.size} recording(s) + metadata to the desktop.\n\n")
+                        append("On the computer: open the FFTT04D Cough Analyzer → \"Request from USB Device\".\n\n")
+                        append("Folder: $path\n")
+                        append("Storage: ${if (isPublic) "public ✓ (All files access)" else "app-private — grant \"All files access\" for reliable USB reads"}\n")
+                        append("Handshake file: fftt_usb_ack.json\n\n")
+                        append(statusLine)
+                        append("   (${elapsed}s elapsed)")
                     }
                 }
-                AlertDialog.Builder(this).setTitle("USB Offer").setView(msgView)
-                    .setPositiveButton("Done", null).show()
+                render()
+                val dialog = AlertDialog.Builder(this).setTitle("USB Offer").setView(msgView)
+                    .setPositiveButton("Done", null)
+                    // The phone decides deletion — but NEVER delete unsent clips. If the transfer isn't
+                    // confirmed (no ack yet), an affirmative delete is ARMED and only runs once the ack
+                    // arrives; if it never arrives, nothing is deleted.
+                    .setNeutralButton("Desktop got them → Delete") { _, _ ->
+                        val confirmed = ackCandidates.any { it.isFile }
+                        android.util.Log.i("FFTT04M", "USB offer: manual delete tapped (transferConfirmed=$confirmed)")
+                        promptDeleteAfterTransfer(wavs, wavs.size, confirmed)
+                    }
+                    .show()
 
-                // Poll for the desktop's ack (written beside the offer via adb push) for up to 2 min.
+                // Live elapsed-time ticker (uses the view's own handler — no extra imports).
+                val ticker = object : Runnable {
+                    override fun run() {
+                        if (!dialog.isShowing || isFinishing) return
+                        render()
+                        msgView.postDelayed(this, 1000)
+                    }
+                }
+                msgView.postDelayed(ticker, 1000)
+
+                // Poll for the desktop's ack for up to 20 min (human-paced handshake + slow USB pulls).
+                // Poll independently of the dialog: tapping a dialog button dismisses it, and we must keep
+                // watching so the auto delete-prompt — or a deferred armed delete — still fires on the ack.
                 thread {
-                    val deadline = System.currentTimeMillis() + 120_000
+                    val deadline = System.currentTimeMillis() + 1_200_000
                     while (System.currentTimeMillis() < deadline && !isFinishing) {
-                        if (ackFile?.isFile == true) {
+                        val hit = ackCandidates.firstOrNull { it.isFile }
+                        if (hit != null) {
                             val n = runCatching {
-                                org.json.JSONObject(ackFile.readText()).optInt("received_count", wavs.size)
+                                org.json.JSONObject(hit.readText()).optInt("received_count", wavs.size)
                             }.getOrDefault(wavs.size)
+                            android.util.Log.i("FFTT04M", "USB ack seen at ${hit.absolutePath}: received_count=$n")
                             runOnUiThread {
                                 if (!isFinishing) {
-                                    msgView.text = "✓ Desktop received $n recording(s).\n\nFolder: $path"
-                                    // The phone decides whether to delete its now-safely-copied data.
-                                    promptDeleteAfterTransfer(wavs, n)
+                                    msgView.removeCallbacks(ticker)
+                                    if (dialog.isShowing) dialog.dismiss()
+                                    if (pendingDeleteOnAck) {          // user pre-affirmed; now it's safe
+                                        pendingDeleteOnAck = false
+                                        performDeletion(pendingTransferList, n)
+                                    } else {
+                                        promptDeleteAfterTransfer(wavs, n, transferConfirmed = true)
+                                    }
                                 }
                             }
-                            break
+                            return@thread
                         }
-                        try { Thread.sleep(1500) } catch (e: InterruptedException) { break }
+                        try { Thread.sleep(1500) } catch (e: InterruptedException) { return@thread }
+                    }
+                    android.util.Log.i("FFTT04M", "USB ack not seen before timeout/dismiss (pendingDelete=$pendingDeleteOnAck)")
+                    if (pendingDeleteOnAck) {   // armed but never confirmed → keep the files, say so
+                        pendingDeleteOnAck = false
+                        runOnUiThread {
+                            if (!isFinishing) Toast.makeText(this@GalleryActivity,
+                                "Transfer never confirmed — nothing was deleted.", Toast.LENGTH_LONG).show()
+                        }
+                    }
+                    runOnUiThread {
+                        if (!isFinishing && dialog.isShowing) {
+                            statusLine = "⚠ No desktop confirmation after 20 min. If the desktop shows it " +
+                                "received them, tap \"Desktop got them → Delete\"."
+                            render()
+                        }
                     }
                 }
             }
         }
     }
 
-    /** After the desktop confirms receipt, let the user (the phone decides) delete the copies it just
-     *  handed over — frees space and avoids re-sending. Destructive, so it's an explicit confirm. */
-    private fun promptDeleteAfterTransfer(transferred: List<File>, ackedCount: Int) {
+    // A delete the user affirmed BEFORE the transfer was confirmed: held until the ack proves the
+    // desktop actually received the files, so unsent recordings are never deleted.
+    private var pendingDeleteOnAck = false
+    private var pendingTransferList: List<File> = emptyList()
+
+    /** Confirm dialog for the phone-decided post-transfer delete. When [transferConfirmed] is false
+     *  (no ack yet) an affirmative answer ARMS the delete instead of running it — nothing is removed
+     *  until the ack confirms receipt; if confirmation never comes, nothing is deleted. */
+    private fun promptDeleteAfterTransfer(transferred: List<File>, ackedCount: Int, transferConfirmed: Boolean) {
+        val msg = if (transferConfirmed)
+            "The desktop confirmed receipt of $ackedCount recording(s).\n\n" +
+            "Delete the ${transferred.size} recording(s) you offered from this phone now? " +
+            "Their spectrogram thumbnails and metadata go too. This can't be undone."
+        else
+            "⚠ The desktop has NOT confirmed receipt yet.\n\n" +
+            "If you choose Delete, nothing is removed now — the app WAITS and deletes the " +
+            "${transferred.size} recording(s) only once the transfer is confirmed complete. " +
+            "If it's never confirmed, nothing is deleted."
         AlertDialog.Builder(this)
             .setTitle("Delete transferred recordings?")
-            .setMessage("The desktop confirmed receipt of $ackedCount recording(s).\n\n" +
-                "Delete the ${transferred.size} recording(s) you offered from this phone now? " +
-                "Their spectrogram thumbnails and metadata go too. This can't be undone.")
-            .setPositiveButton("Delete") { _, _ ->
-                var deleted = 0
-                transferred.forEach { wav ->
-                    val base = wav.nameWithoutExtension
-                    val parent = wav.parentFile
-                    if (wav.exists() && wav.delete()) deleted++
-                    File(parent, "$base.png").delete()
-                    File(parent, "$base.txt").delete()
-                    File(parent, "$base.json").delete()
+            .setMessage(msg)
+            .setPositiveButton(if (transferConfirmed) "Delete" else "Delete when confirmed") { _, _ ->
+                if (transferConfirmed) {
+                    performDeletion(transferred, ackedCount)
+                } else {
+                    pendingDeleteOnAck = true
+                    pendingTransferList = transferred
+                    Toast.makeText(this, "Delete armed — runs only after the desktop confirms receipt.",
+                        Toast.LENGTH_LONG).show()
                 }
-                Toast.makeText(this, "Deleted $deleted transferred recording(s)", Toast.LENGTH_LONG).show()
-                loadFiles()
             }
             .setNegativeButton("Keep", null)
             .show()
+    }
+
+    /** Actually remove the transferred clips + sidecars. ONLY call once the transfer is confirmed. */
+    private fun performDeletion(transferred: List<File>, ackedCount: Int) {
+        var deleted = 0
+        transferred.forEach { wav ->
+            val base = wav.nameWithoutExtension
+            val parent = wav.parentFile
+            if (wav.exists() && wav.delete()) deleted++
+            File(parent, "$base.png").delete()
+            File(parent, "$base.txt").delete()
+            File(parent, "$base.json").delete()
+        }
+        android.util.Log.i("FFTT04M", "USB: deleted $deleted/$ackedCount confirmed-transferred recording(s)")
+        Toast.makeText(this, "Deleted $deleted transferred recording(s)", Toast.LENGTH_LONG).show()
+        loadFiles()
     }
 
     /** Build a .fftt bundle and hand it to the system share sheet (Quick Share / Bluetooth / email /
