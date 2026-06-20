@@ -2,17 +2,18 @@ package com.example.FFTT04M
 
 import android.content.Context
 import android.graphics.Bitmap
-import com.example.FFTT04M.cough.ClipMatcher
+import com.example.FFTT04M.cough.PhonemeDecoder
 import java.io.File
 import java.io.FileOutputStream
 
 /**
- * "Dig deeper into clip storage": one-time backfill over already-stored recordings. For each `.wav`
- * missing its `.png` spectrogram icon and/or its `.txt` match comment, read the clip once and
- * generate whichever is missing — the offline FFT thumbnail ([SpectrogramThumb]) and/or the nearest
- * cough/non-cough DB match ([ClipMatcher]). Idempotent and safe to re-run (skips clips that already
- * have both). Runs on a background thread; [onProgress] fires after each clip that changed so an open
- * gallery can refresh.
+ * "Dig deeper into clip storage": backfill over stored recordings. For each `.wav` missing its `.png`
+ * spectrogram icon and/or its `.phon` phoneme decode, read the clip once and generate whichever is
+ * missing — the offline FFT thumbnail ([SpectrogramThumb]) and/or the Spectral-Flux fractionate +
+ * phoneme decode ([PhonemeDecoder]). Also a one-time cleanup of the OLD whole-clip "auto-match
+ * (top-3)" `.txt` sidecars (now superseded by `.phon`), leaving real user comments untouched.
+ * Idempotent and safe to re-run; runs on a background thread; [onProgress] fires after each changed
+ * clip so an open gallery can refresh.
  */
 object ClipBackfill {
 
@@ -27,68 +28,72 @@ object ClipBackfill {
         if (running) return
         running = true
         cancelled = false
-        var icons = 0; var comments = 0; var failed = 0
+        var icons = 0; var decodes = 0; var cleaned = 0; var failed = 0
         val t0 = System.currentTimeMillis()
-        // One-time content upgrade (old single-line auto-match → top-3+confidence) requires reading
-        // every .txt — slow. After one full pass we set this flag, so steady-state opens only do cheap
-        // exists() checks for genuinely new clips (missing .txt/.png), not a full re-read each time.
+        // One-time migration: delete the OLD whole-clip "auto-match (top-3)" .txt sidecars (now replaced
+        // by the .phon phoneme decode). Reading every .txt is slow, so do it once and flag it; afterwards
+        // steady-state opens only do cheap set checks for clips missing .phon/.png. New clips never get an
+        // auto-match .txt (we don't write them anymore), so cleanup is genuinely one-time.
         val prefs = ctx.getSharedPreferences("app_settings", android.content.Context.MODE_PRIVATE)
-        val upgraded = prefs.getBoolean("clip_match_upgraded_v2", false)
+        val migrated = prefs.getBoolean("phon_decode_v1", false)
         try {
             val dir = GalleryTransfer.recordingsDir(ctx) ?: ctx.filesDir
             // ONE directory listing; membership via in-memory sets (per-file exists() on emulated
             // storage was ~490 stats / 5s per open). Now steady-state opens are a single listdir.
             val all = dir.listFiles() ?: return
             val wavs = all.filter { it.isFile && it.extension.equals("wav", true) }
-            val haveIcon = HashSet<String>(); val haveTxt = HashSet<String>()
+            val haveIcon = HashSet<String>(); val haveTxt = HashSet<String>(); val havePhon = HashSet<String>()
             for (f in all) when {
                 f.extension.equals("png", true) -> haveIcon.add(f.nameWithoutExtension)
                 f.extension.equals("txt", true) -> haveTxt.add(f.nameWithoutExtension)
+                f.extension.equals("phon", true) -> havePhon.add(f.nameWithoutExtension)
             }
-            android.util.Log.i("FFTT04M", "ClipBackfill: scanning ${wavs.size} clips (upgraded=$upgraded)")
+            android.util.Log.i("FFTT04M", "ClipBackfill: scanning ${wavs.size} clips (migrated=$migrated)")
             for (wav in wavs) {
                 if (cancelled) { android.util.Log.i("FFTT04M", "ClipBackfill cancelled (left gallery)"); break }
                 val base = wav.nameWithoutExtension
                 val png = File(dir, "$base.png")
                 val txt = File(dir, "$base.txt")
-                val needIcon = base !in haveIcon
-                // After the one-time upgrade, only a MISSING .txt needs work. Before it, read content
-                // for clips that have a .txt to upgrade old auto-match comments (user comments left be).
-                val needComment = if (upgraded) {
-                    base !in haveTxt
-                } else {
-                    val existing = if (base in haveTxt) runCatching { txt.readText() }.getOrNull() else null
-                    existing == null || (existing.startsWith("auto-match") && !existing.contains("conf "))
-                }
-                if (!needIcon && !needComment) continue
-                val data = try { WavReader.read(wav) } catch (e: Throwable) {
-                    failed++; android.util.Log.w("FFTT04M", "ClipBackfill: read failed ${wav.name}: ${e.message}"); continue
-                }
                 var changed = false
-                if (needComment) {
-                    runCatching { ClipMatcher.annotate(ctx, wav, data.samples, data.sampleRate) }
-                    if (txt.exists()) { comments++; changed = true }
+                // One-time: drop the stale auto-generated "best 3 matches" .txt; keep real user comments.
+                if (!migrated && base in haveTxt) {
+                    val existing = runCatching { txt.readText() }.getOrNull()
+                    if (existing != null && existing.startsWith("auto-match") && txt.delete()) {
+                        cleaned++; changed = true; haveTxt.remove(base)
+                    }
                 }
-                if (needIcon) {
-                    runCatching {
-                        SpectrogramThumb.render(ctx, data.samples, data.sampleRate)?.let { bmp ->
-                            FileOutputStream(png).use { bmp.compress(Bitmap.CompressFormat.PNG, 100, it) }
-                            bmp.recycle()
-                            icons++; changed = true
+                val needIcon = base !in haveIcon
+                val needDecode = base !in havePhon
+                if (needIcon || needDecode) {
+                    val data = try { WavReader.read(wav) } catch (e: Throwable) {
+                        failed++; android.util.Log.w("FFTT04M", "ClipBackfill: read failed ${wav.name}: ${e.message}")
+                        if (changed) onProgress?.invoke(); continue
+                    }
+                    if (needDecode) {
+                        runCatching { PhonemeDecoder.annotate(ctx, wav, data.samples, data.sampleRate) }
+                        if (File(dir, "$base.phon").exists()) { decodes++; changed = true }
+                    }
+                    if (needIcon) {
+                        runCatching {
+                            SpectrogramThumb.render(ctx, data.samples, data.sampleRate)?.let { bmp ->
+                                FileOutputStream(png).use { bmp.compress(Bitmap.CompressFormat.PNG, 100, it) }
+                                bmp.recycle()
+                                icons++; changed = true
+                            }
                         }
                     }
                 }
                 if (changed) onProgress?.invoke()
             }
-            // Only mark the upgrade done after a COMPLETE (non-cancelled) pass.
-            if (!upgraded && !cancelled) prefs.edit().putBoolean("clip_match_upgraded_v2", true).apply()
+            // Only mark the migration done after a COMPLETE (non-cancelled) pass.
+            if (!migrated && !cancelled) prefs.edit().putBoolean("phon_decode_v1", true).apply()
         } catch (e: Throwable) {
             android.util.Log.w("FFTT04M", "ClipBackfill aborted: ${e.message}")
         } finally {
             running = false
             android.util.Log.i("FFTT04M",
-                "ClipBackfill done: +$icons icons, +$comments comments, $failed failed, " +
-                "${System.currentTimeMillis() - t0}ms (matcher ready=${ClipMatcher.isReady})")
+                "ClipBackfill done: +$icons icons, +$decodes decodes, $cleaned cleaned, $failed failed, " +
+                "${System.currentTimeMillis() - t0}ms (decoder ready=${PhonemeDecoder.isReady})")
         }
     }
 }

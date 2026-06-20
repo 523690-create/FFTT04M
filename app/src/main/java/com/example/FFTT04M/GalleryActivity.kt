@@ -34,6 +34,7 @@ import kotlin.concurrent.thread
 import androidx.recyclerview.widget.GridLayoutManager
 import androidx.recyclerview.widget.LinearLayoutManager
 import androidx.recyclerview.widget.RecyclerView
+import com.example.FFTT04M.cough.PhonemeDecoder
 import java.io.File
 
 class GalleryActivity : AppCompatActivity() {
@@ -429,6 +430,7 @@ class GalleryActivity : AppCompatActivity() {
             if (wav.exists() && wav.delete()) deleted++
             File(parent, "$base.png").delete()
             File(parent, "$base.txt").delete()
+            File(parent, "$base.phon").delete()
             File(parent, "$base.json").delete()
         }
         android.util.Log.i("FFTT04M", "USB: deleted $deleted/$ackedCount confirmed-transferred recording(s)")
@@ -573,9 +575,11 @@ class GalleryActivity : AppCompatActivity() {
             .setPositiveButton("DELETE") { _, _ ->
                 val iconFile = File(file.parent, file.nameWithoutExtension + ".png")
                 val commentFile = File(file.parent, file.nameWithoutExtension + ".txt")
+                val phonFile = File(file.parent, file.nameWithoutExtension + ".phon")
                 if (file.exists()) file.delete()
                 if (iconFile.exists()) iconFile.delete()
                 if (commentFile.exists()) commentFile.delete()
+                if (phonFile.exists()) phonFile.delete()
                 files.removeAt(position)
                 recyclerView.adapter?.notifyItemRemoved(position)
             }
@@ -630,13 +634,25 @@ class GalleryActivity : AppCompatActivity() {
 
             holder.textView.text = file.name
 
-            val commentFile = File(file.parent, file.nameWithoutExtension + ".txt")
-            val comment = if (commentFile.exists()) commentFile.readText().trim() else ""
-            if (comment.isEmpty()) {
+            // Comment cell = the user's manual comment (the .txt, but NOT the old auto-generated
+            // "auto-match (top-3)" dumps) + the on-device phoneme decode (≈ class: word, from .phon).
+            val base = file.nameWithoutExtension
+            val commentFile = File(file.parent, "$base.txt")
+            val manual = if (commentFile.exists())
+                (commentFile.readText().trim().takeUnless { it.startsWith("auto-match") } ?: "") else ""
+            val decoded = file.parentFile?.let { PhonemeDecoder.read(it, base) }
+            val sb = StringBuilder()
+            if (manual.isNotEmpty()) sb.append(manual)
+            if (decoded != null && decoded.letter != "?") {
+                if (sb.isNotEmpty()) sb.append('\n')
+                sb.append("≈ ").append(decoded.label).append(" (").append(decoded.letter).append("): ")
+                    .append(decoded.word.joinToString(" "))
+            }
+            if (sb.isEmpty()) {
                 holder.commentView.visibility = View.GONE
             } else {
                 holder.commentView.visibility = View.VISIBLE
-                holder.commentView.text = comment
+                holder.commentView.text = sb.toString()
             }
 
             val iconFile = File(file.parent, file.nameWithoutExtension + ".png")
