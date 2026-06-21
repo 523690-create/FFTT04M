@@ -152,9 +152,9 @@ class CoughCaptureService : Service() {
         val wav = File(dir, "cough_$ts.wav")
         runCatching { CoughWav.write(wav, c.pcm, sampleRate) }
         // Background captures write no live icon, so generate the FFT spectrogram thumbnail here, plus
-        // the closest-match label — both off-thread (no-op if a ref/icon already exists).
+        // the on-the-fly phoneme decode (.phon) — both off-thread (no-op if already present).
         thread {
-            runCatching { com.example.FFTT04M.cough.ClipMatcher.annotate(this, wav, c.pcm, sampleRate) }
+            runCatching { com.example.FFTT04M.cough.PhonemeDecoder.annotate(this, wav, c.pcm, sampleRate) }
             val png = File(dir, "cough_$ts.png")
             if (!png.exists()) runCatching {
                 SpectrogramThumb.render(this, c.pcm, sampleRate)?.let { bmp ->

@@ -77,9 +77,10 @@ object PhonemeDecoder {
         val mu = mean ?: return null
         val sd = std ?: return null
         if (phonemes.isEmpty() || mu.size != 13) return null
+        val x = pcm.copyOf().also { rmsNormalize(it) }   // match the codebook's RMS-normalised training
         val word = ArrayList<String>()
-        for ((sMs, eMs) in fractionate(pcm, sr)) {
-            val v = fragVec(pcm, sr, sMs, eMs)
+        for ((sMs, eMs) in fractionate(x, sr)) {
+            val v = fragVec(x, sr, sMs, eMs)
             if (v == null) { word.add("?"); continue }
             for (i in 0 until 13) v[i] = (v[i] - mu[i]) / sd[i]
             var best: Phoneme? = null; var bestD = Double.MAX_VALUE
@@ -127,6 +128,14 @@ object PhonemeDecoder {
 
     private fun dist(a: DoubleArray, b: DoubleArray): Double {
         var s = 0.0; for (i in a.indices) { val d = a[i] - b[i]; s += d * d }; return sqrt(s)
+    }
+
+    /** Scale the whole clip to a target RMS (matches the codebook's training) so device mic-gain
+     *  differences (Pixel 10 ≈ 8× the Pixel 3a) don't shift level-sensitive features. */
+    private fun rmsNormalize(pcm: FloatArray, target: Float = 0.1f) {
+        var s = 0.0; for (x in pcm) s += x.toDouble() * x
+        val rms = sqrt(s / pcm.size.coerceAtLeast(1))
+        if (rms > 1e-5) { val g = (target / rms).toFloat(); for (i in pcm.indices) pcm[i] *= g }
     }
 
     // ---- Spectral Flux Onset fractionation (ported from desktop SpectralFluxOnset) ----------------
