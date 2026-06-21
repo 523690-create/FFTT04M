@@ -78,19 +78,16 @@ object PhonemeDecoder {
         val sd = std ?: return null
         if (phonemes.isEmpty() || mu.size != 13) return null
         val word = ArrayList<String>()
-        val letterWeight = HashMap<String, Double>()   // class vote weighted by fragment DURATION, not count
         for ((sMs, eMs) in fractionate(pcm, sr)) {
             val v = fragVec(pcm, sr, sMs, eMs)
-            val code = if (v == null) "?" else {
-                for (i in 0 until 13) v[i] = (v[i] - mu[i]) / sd[i]
-                var best: Phoneme? = null; var bestD = Double.MAX_VALUE
-                for (p in phonemes) { val d = dist(v, p.centroid); if (d < bestD) { bestD = d; best = p } }
-                if (best != null && bestD <= best.radius) best.code else "?"
-            }
-            word.add(code)
-            if (code != "?") { val l = code.takeWhile { it.isLetter() }; letterWeight[l] = (letterWeight[l] ?: 0.0) + (eMs - sMs) }
+            if (v == null) { word.add("?"); continue }
+            for (i in 0 until 13) v[i] = (v[i] - mu[i]) / sd[i]
+            var best: Phoneme? = null; var bestD = Double.MAX_VALUE
+            for (p in phonemes) { val d = dist(v, p.centroid); if (d < bestD) { bestD = d; best = p } }
+            word.add(if (best != null && bestD <= best.radius) best.code else "?")
         }
-        val letter = letterWeight.maxByOrNull { it.value }?.key ?: "?"
+        val letter = word.asSequence().filter { it != "?" }.map { it.takeWhile { c -> c.isLetter() } }
+            .groupingBy { it }.eachCount().maxByOrNull { it.value }?.key ?: "?"
         return Decoded(letter, labelByLetter[letter] ?: "?", word)
     }
 
