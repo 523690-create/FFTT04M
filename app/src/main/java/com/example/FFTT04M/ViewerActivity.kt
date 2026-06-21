@@ -1823,9 +1823,13 @@ class ViewerActivity : AppCompatActivity() {
             // (EQ boosts clip past full-scale, and the spectral-subtraction reconstruction
             // overwrites overlapping windowed blocks with no overlap-add/COLA normalization).
             // So playback ignores the Filter settings, matching FFTT02M's raw playback.
+            // Peak-normalize so quiet clips are audible on playback (loud clips unchanged — no clipping;
+            // gain capped at 40x so near-silent clips aren't blown up).
+            var peak = 0f; for (x in pcm) { val a = kotlin.math.abs(x); if (a > peak) peak = a }
+            val gain = if (peak > 1e-4f) (0.95f / peak).coerceAtMost(40f) else 1f
             val audioData = ShortArray(pcm.size)
             for (i in pcm.indices) {
-                audioData[i] = (pcm[i].coerceIn(-1f, 1f) * 32767).toInt().toShort()
+                audioData[i] = ((pcm[i] * gain).coerceIn(-1f, 1f) * 32767).toInt().toShort()
             }
 
             startPlayback(audioData)
