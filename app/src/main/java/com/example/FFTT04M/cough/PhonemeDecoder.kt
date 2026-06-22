@@ -138,52 +138,21 @@ object PhonemeDecoder {
         if (rms > 1e-5) { val g = (target / rms).toFloat(); for (i in pcm.indices) pcm[i] *= g }
     }
 
-    // ---- Spectral Flux Onset fractionation (ported from desktop SpectralFluxOnset) ----------------
+    // ---- Fixed-grid overlapping windows (matches the desktop codebook: deterministic fragmentation,
+    //      no onset-count variance; 50% overlap absorbs frame-shifts). ----
+    private const val WIN_MS = 180
+    private const val HOP_MS = 90
     private fun fractionate(x: FloatArray, sr: Int): List<Pair<Int, Int>> {
-        if (x.isEmpty()) return emptyList()
-        val frameMs = 25.0; val hopMs = 10.0; val sensitivity = 1.2f
-        val minOnsetMs = 150; val smoothWin = 5; val historyFrames = 150
-        val win = max(8, (frameMs / 1000 * sr).roundToInt())
-        val hop = max(1, (hopMs / 1000 * sr).roundToInt())
-        val fftSize = nextPow2(win)
-        val half = fftSize / 2
-        val minHold = max(1, (minOnsetMs / hopMs).roundToInt())
-        val numFrames = max(0, (x.size - win) / hop + 1)
-        val wholeMs = (x.size.toDouble() / sr * 1000).roundToInt()
-        if (numFrames < 2) return listOf(0 to wholeMs)
-
-        val mags = Array(numFrames) { f ->
-            CoughDsp.magnitudeSpectrum(FloatArray(win) { x[f * hop + it] }, fftSize, true)
+        val durMs = (x.size.toLong() * 1000 / sr).toInt()
+        if (durMs <= WIN_MS) return if (durMs > 0) listOf(0 to durMs) else emptyList()
+        val out = ArrayList<Pair<Int, Int>>()
+        var s = 0
+        while (s < durMs) {
+            val e = (s + WIN_MS).coerceAtMost(durMs)
+            if (e - s >= WIN_MS / 2) out.add(s to e)
+            if (e >= durMs) break
+            s += HOP_MS
         }
-        val flux = FloatArray(numFrames)
-        for (i in 1 until numFrames) {
-            val prev = mags[i - 1]; val cur = mags[i]; var sf = 0f
-            for (k in 0 until half) { val d = cur[k] - prev[k]; if (d > 0) sf += d }
-            flux[i] = sf
-        }
-        val smooth = FloatArray(numFrames)
-        for (i in flux.indices) {
-            val a = max(0, i - smoothWin / 2); val b = min(numFrames, i + smoothWin / 2 + 1)
-            var s = 0f; for (j in a until b) s += flux[j]; smooth[i] = s / (b - a)
-        }
-        val onsets = ArrayList<Int>(); var hold = 0
-        for (i in 1 until smooth.size) {
-            if (hold > 0) { hold--; continue }
-            val thr = CoughDsp.median(smooth.copyOfRange(max(0, i - historyFrames), i)) * sensitivity
-            if (smooth[i] > thr && smooth[i] > smooth[i - 1]) { onsets.add(i); hold = minHold }
-        }
-        if (onsets.isEmpty()) return listOf(0 to wholeMs)
-
-        val boundaries = listOf(0) + onsets + listOf(numFrames)
-        val segs = ArrayList<Pair<Int, Int>>(boundaries.size)
-        for (b in 0 until boundaries.size - 1) {
-            val startMs = (boundaries[b] * hop.toDouble() / sr * 1000).roundToInt()
-            val endSample = (boundaries[b + 1] * hop + win).coerceAtMost(x.size)
-            val endMs = (endSample.toDouble() / sr * 1000).roundToInt()
-            if (endMs > startMs) segs.add(startMs to endMs)
-        }
-        return segs
+        return out
     }
-
-    private fun nextPow2(n: Int): Int { var p = 1; while (p < n) p = p shl 1; return p }
 }
