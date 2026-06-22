@@ -205,6 +205,8 @@ dependencies {
     implementation(libs.material)
     // QR generate/scan for device-to-device gallery transfer (pure Java, no Play Services).
     implementation("com.journeyapps:zxing-android-embedded:4.3.0")
+    // On-device HuBERT inference (capable/Tier-2 phones only — see HubertProbe). ~15 MB native libs.
+    implementation("com.microsoft.onnxruntime:onnxruntime-android:1.20.0")
     coreLibraryDesugaring("com.android.tools:desugar_jdk_libs:2.1.5")
     testImplementation(libs.junit)
     androidTestImplementation(libs.androidx.junit)

@@ -212,6 +212,16 @@ class GalleryActivity : AppCompatActivity() {
             runOnUiThread { if (!isFinishing && !isDestroyed) loadFiles() }   // final refresh
         }
 
+        // One-shot on-device HuBERT latency probe (only if the model has been pushed to the device).
+        // Logs to:  adb logcat -s HubertProbe
+        if (com.example.FFTT04M.cough.HubertProbe.available(this)) thread {
+            try {
+                val dir = GalleryTransfer.recordingsDir(this) ?: filesDir
+                val wav = dir.listFiles { f -> f.extension.equals("wav", true) }?.firstOrNull()
+                if (wav != null) { val d = WavReader.read(wav); com.example.FFTT04M.cough.HubertProbe.probeOnce(this, d.samples, d.sampleRate) }
+            } catch (e: Exception) { android.util.Log.w("HubertProbe", "trigger failed: ${e.message}") }
+        }
+
         btnViewToggle.setOnClickListener {
             isGridView = !isGridView
             prefs.edit().putBoolean("gallery_is_grid", isGridView).apply()
