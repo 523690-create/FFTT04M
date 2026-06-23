@@ -6,7 +6,6 @@ import android.graphics.Canvas
 import android.graphics.Color
 import android.graphics.Paint
 import android.os.Bundle
-import android.view.GestureDetector
 import android.view.MotionEvent
 import android.view.ScaleGestureDetector
 import android.view.View
@@ -21,6 +20,9 @@ import com.example.FFTT04M.WavReader
 import android.graphics.Path
 import java.io.File
 import kotlin.concurrent.thread
+import kotlin.math.cos
+import kotlin.math.min
+import kotlin.math.sin
 import kotlin.math.sqrt
 
 /** Background classes: they don't define the cloud's axes and get no boundary hull — they just fall
@@ -95,8 +97,12 @@ class ClipCloudActivity : Activity() {
         // variance AMONG the cough/respiratory classes; noise & voice are then projected onto that same
         // plane and fall where they may instead of dominating the axes.
         val fit = BooleanArray(pts.size) { pts[it].label !in BACKGROUND_LABELS }
-        val proj = pca2d(pts.map { it.emb }, fit)
-        for (i in pts.indices) { pts[i].x = proj[i][0]; pts[i].y = proj[i][1] }
+        val proj = pca3d(pts.map { it.emb }, fit)
+        for (i in pts.indices) { pts[i].x = proj[i][0]; pts[i].y = proj[i][1]; pts[i].z = proj[i][2] }
+        // Centre on the important-clip centroid so tumble rotates about the cough structure.
+        val imp = pts.filter { it.label !in BACKGROUND_LABELS }.ifEmpty { pts }
+        val cx = imp.map { it.x }.average(); val cy = imp.map { it.y }.average(); val cz = imp.map { it.z }.average()
+        for (p in pts) { p.x -= cx; p.y -= cy; p.z -= cz }
 
         runOnUiThread {
             if (isFinishing || isDestroyed) return@runOnUiThread
@@ -107,7 +113,8 @@ class ClipCloudActivity : Activity() {
             view = v
             root.addView(v, 0, FrameLayout.LayoutParams(
                 ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.MATCH_PARENT))
-            Toast.makeText(this, "${pts.size} clips • pinch to zoom, drag to pan, tap a point to open", Toast.LENGTH_LONG).show()
+            Toast.makeText(this, "${pts.size} clips • 1-finger rotate (reveals PC3) • 2-finger pan • pinch zoom • tap to open",
+                Toast.LENGTH_LONG).show()
         }
     }
 
@@ -125,10 +132,11 @@ class ClipCloudActivity : Activity() {
         return PhonemeDecoder.read(dir, base)?.label ?: "?"
     }
 
-    // ---- PCA-2D (z-norm + power iteration with deflation; mirrors BronchitisCloud) ----
+    // ---- PCA-3D (z-norm + power iteration with deflation; mirrors BronchitisCloud) ----
     //  The basis (mean/std/covariance/eigenvectors) is fitted on the [fit]-marked clips only; ALL clips
-    //  are then projected onto it. Falls back to all clips if too few are marked.
-    private fun pca2d(vecs: List<FloatArray>, fit: BooleanArray): Array<DoubleArray> {
+    //  are then projected onto the top-3 PCs. PC3 (the depth axis) is what one-finger tumble reveals.
+    //  Falls back to all clips if too few are marked.
+    private fun pca3d(vecs: List<FloatArray>, fit: BooleanArray): Array<DoubleArray> {
         val n = vecs.size; val d = vecs[0].size
         val basis = vecs.indices.filter { fit[it] }.let { if (it.size >= 3) it else vecs.indices.toList() }
         val nb = basis.size
@@ -140,17 +148,22 @@ class ClipCloudActivity : Activity() {
         // z-norm ALL clips with the basis mean/std (so projections are comparable)
         val z = Array(n) { k -> DoubleArray(d) { (vecs[k][it] - mean[it]) / std[it] } }
         // covariance over the BASIS rows only → axes capture variance among the important clips
-        val cov = Array(d) { DoubleArray(d) }
+        var cov = Array(d) { DoubleArray(d) }
         for (i in basis) { val v = z[i]; for (a in 0 until d) { val va = v[a]; for (b in a until d) cov[a][b] += va * v[b] } }
         for (a in 0 until d) for (b in a until d) { cov[a][b] /= nb; cov[b][a] = cov[a][b] }
-        val pc1 = powerIter(cov, d)
-        var lam = 0.0; for (i in 0 until d) { var t = 0.0; for (j in 0 until d) t += cov[i][j] * pc1[j]; lam += pc1[i] * t }
-        val cov2 = Array(d) { i -> DoubleArray(d) { j -> cov[i][j] - lam * pc1[i] * pc1[j] } }
-        val pc2 = powerIter(cov2, d)
+        // top-3 eigenvectors by power iteration + deflation
+        fun lambdaOf(m: Array<DoubleArray>, v: DoubleArray): Double {
+            var s = 0.0; for (i in 0 until d) { var t = 0.0; for (j in 0 until d) t += m[i][j] * v[j]; s += v[i] * t }; return s
+        }
+        fun deflate(m: Array<DoubleArray>, lam: Double, v: DoubleArray) =
+            Array(d) { i -> DoubleArray(d) { j -> m[i][j] - lam * v[i] * v[j] } }
+        val pc1 = powerIter(cov, d); cov = deflate(cov, lambdaOf(cov, pc1), pc1)
+        val pc2 = powerIter(cov, d); cov = deflate(cov, lambdaOf(cov, pc2), pc2)
+        val pc3 = powerIter(cov, d)
         return Array(n) { k ->
-            var a = 0.0; var b = 0.0
-            for (i in 0 until d) { a += z[k][i] * pc1[i]; b += z[k][i] * pc2[i] }
-            doubleArrayOf(a, b)
+            var a = 0.0; var b = 0.0; var c = 0.0
+            for (i in 0 until d) { a += z[k][i] * pc1[i]; b += z[k][i] * pc2[i]; c += z[k][i] * pc3[i] }
+            doubleArrayOf(a, b, c)
         }
     }
 
@@ -166,10 +179,11 @@ class ClipCloudActivity : Activity() {
     }
 
     class Pt(val file: File, val label: String, val emb: FloatArray) {
-        var x = 0.0; var y = 0.0
+        var x = 0.0; var y = 0.0; var z = 0.0
     }
 
-    /** Pan/zoom scatter; tap a point (within a small radius) to open the clip. */
+    /** 3-D PCA cloud: one-finger tumble (yaw+pitch) reveals PC3, two-finger pan, pinch zoom, tap opens.
+     *  Class-boundary hulls are recomputed on the current projection each frame. */
     class ClipCloudView(
         ctx: Activity, private val pts: List<Pt>, private val onTap: (Pt) -> Unit,
     ) : View(ctx) {
@@ -180,65 +194,106 @@ class ClipCloudActivity : Activity() {
         private val legendPaint = Paint(Paint.ANTI_ALIAS_FLAG).apply { color = Color.WHITE; textSize = 30f }
         private val labels = pts.map { it.label }.distinct().sorted()
         private val colorOf = labels.associateWith { classColor(it) }
+        private val hullLabels = pts.groupBy { it.label }.filterKeys { it !in BACKGROUND_LABELS }
+            .filterValues { it.size >= 3 }.keys
 
-        // Class-boundary hulls: a translucent convex hull per non-background class (≥3 points).
-        private val hulls: Map<String, List<DoubleArray>> = pts.groupBy { it.label }
-            .filterKeys { it !in BACKGROUND_LABELS }
-            .mapValues { (_, ps) -> convexHull(ps.map { doubleArrayOf(it.x, it.y) }) }
-            .filterValues { it.size >= 3 }
+        // Radius for auto-fit scaling (max distance of any point from the centre).
+        private val maxR = (pts.maxOfOrNull { sqrt(it.x * it.x + it.y * it.y + it.z * it.z) } ?: 1.0).coerceAtLeast(1e-6)
 
-        // Frame on the important clips so the cough structure fills the view; background points that
-        // land outside just sit near the edges (pan/zoom to reach them).
-        private val framePts = pts.filter { it.label !in BACKGROUND_LABELS }.ifEmpty { pts }
-        private val minX = framePts.minOf { it.x }; private val maxX = framePts.maxOf { it.x }
-        private val minY = framePts.minOf { it.y }; private val maxY = framePts.maxOf { it.y }
+        // view state
+        private var yaw = 0f; private var pitch = 0f
+        private var zoom = 1f; private var panX = 0f; private var panY = 0f
 
-        private var scale = 1f; private var panX = 0f; private var panY = 0f
         private val scaleGd = ScaleGestureDetector(ctx, object : ScaleGestureDetector.SimpleOnScaleGestureListener() {
-            override fun onScale(g: ScaleGestureDetector): Boolean {
-                scale = (scale * g.scaleFactor).coerceIn(0.4f, 12f); invalidate(); return true
-            }
-        })
-        private val tapGd = GestureDetector(ctx, object : GestureDetector.SimpleOnGestureListener() {
-            override fun onScroll(e1: MotionEvent?, e2: MotionEvent, dx: Float, dy: Float): Boolean {
-                panX -= dx; panY -= dy; invalidate(); return true
-            }
-            override fun onSingleTapUp(e: MotionEvent): Boolean { hit(e.x, e.y)?.let(onTap); return true }
+            override fun onScale(g: ScaleGestureDetector): Boolean { zoom = (zoom * g.scaleFactor).coerceIn(0.3f, 12f); invalidate(); return true }
         })
 
-        // data → screen
-        private fun sx(x: Double) = panX + (40 + (x - minX) / (maxX - minX + 1e-9) * (width - 80)).toFloat() * scale
-        private fun sy(y: Double) = panY + (height - 60 - (y - minY) / (maxY - minY + 1e-9) * (height - 200)).toFloat() * scale
+        // 1 finger = tumble; 2 fingers = pan (+ pinch zoom via the detector); a quick still touch = tap.
+        private var mode = 0           // 0 idle, 1 rotate, 2 pan/zoom
+        private var lastX = 0f; private var lastY = 0f
+        private var downX = 0f; private var downY = 0f; private var downT = 0L
+        private var lastMidX = 0f; private var lastMidY = 0f
+
+        override fun onTouchEvent(e: MotionEvent): Boolean {
+            scaleGd.onTouchEvent(e)
+            when (e.actionMasked) {
+                MotionEvent.ACTION_DOWN -> { mode = 1; lastX = e.x; lastY = e.y; downX = e.x; downY = e.y; downT = e.eventTime }
+                MotionEvent.ACTION_POINTER_DOWN -> { mode = 2; val m = mid(e); lastMidX = m[0]; lastMidY = m[1] }
+                MotionEvent.ACTION_MOVE -> {
+                    if (mode == 2 && e.pointerCount >= 2) {
+                        val m = mid(e); panX += m[0] - lastMidX; panY += m[1] - lastMidY; lastMidX = m[0]; lastMidY = m[1]; invalidate()
+                    } else if (mode == 1) {
+                        yaw += (e.x - lastX) * 0.01f
+                        pitch = (pitch + (e.y - lastY) * 0.01f).coerceIn(-1.55f, 1.55f)
+                        lastX = e.x; lastY = e.y; invalidate()
+                    }
+                }
+                MotionEvent.ACTION_POINTER_UP -> {
+                    val remain = if (e.actionIndex == 0) 1 else 0   // re-anchor rotate to the finger still down
+                    lastX = e.getX(remain); lastY = e.getY(remain); mode = 1
+                }
+                MotionEvent.ACTION_UP -> {
+                    if (mode == 1) {
+                        val dx = e.x - downX; val dy = e.y - downY
+                        if (dx * dx + dy * dy < 40f * 40f && e.eventTime - downT < 300) hit(e.x, e.y)?.let(onTap)
+                    }
+                    mode = 0
+                }
+            }
+            return true
+        }
+
+        private fun mid(e: MotionEvent): FloatArray {
+            var sx = 0f; var sy = 0f; val n = e.pointerCount
+            for (i in 0 until n) { sx += e.getX(i); sy += e.getY(i) }
+            return floatArrayOf(sx / n, sy / n)
+        }
+
+        // 3-D → screen (orthographic): yaw about the vertical axis, pitch about the horizontal; z2 = depth.
+        private fun project(p: Pt): FloatArray {
+            val cy = cos(yaw.toDouble()); val sy = sin(yaw.toDouble())
+            val cx = cos(pitch.toDouble()); val sx = sin(pitch.toDouble())
+            val x1 = p.x * cy + p.z * sy
+            val z1 = -p.x * sy + p.z * cy
+            val y2 = p.y * cx - z1 * sx
+            val z2 = p.y * sx + z1 * cx
+            val bs = (min(width, height) * 0.40 / maxR) * zoom
+            return floatArrayOf((width / 2f + x1 * bs + panX).toFloat(), (height / 2f - y2 * bs + panY).toFloat(), z2.toFloat())
+        }
 
         private fun hit(px: Float, py: Float): Pt? {
             var best: Pt? = null; var bd = 48f * 48f
-            for (p in pts) { val dx = sx(p.x) - px; val dy = sy(p.y) - py; val d = dx * dx + dy * dy; if (d < bd) { bd = d; best = p } }
+            for (p in pts) { val s = project(p); val dx = s[0] - px; val dy = s[1] - py; val d = dx * dx + dy * dy; if (d < bd) { bd = d; best = p } }
             return best
         }
 
-        override fun onTouchEvent(e: MotionEvent): Boolean {
-            scaleGd.onTouchEvent(e); tapGd.onTouchEvent(e); return true
-        }
-
         override fun onDraw(canvas: Canvas) {
-            // class-boundary hulls (translucent, behind the points)
-            for ((label, hull) in hulls) {
+            // project all points, back-to-front by depth (painter's order)
+            val sp = pts.map { it to project(it) }.sortedBy { it.second[2] }
+            // class-boundary hulls on the current projection (behind the points)
+            for (label in hullLabels) {
+                val scr = sp.filter { it.first.label == label }.map { it.second }
+                if (scr.size < 3) continue
+                val hull = convexHull(scr.map { doubleArrayOf(it[0].toDouble(), it[1].toDouble()) })
+                if (hull.size < 3) continue
                 val c = colorOf[label] ?: Color.GRAY
                 val path = Path()
-                hull.forEachIndexed { i, p ->
-                    val x = sx(p[0]); val y = sy(p[1]); if (i == 0) path.moveTo(x, y) else path.lineTo(x, y)
-                }
+                hull.forEachIndexed { i, h -> if (i == 0) path.moveTo(h[0].toFloat(), h[1].toFloat()) else path.lineTo(h[0].toFloat(), h[1].toFloat()) }
                 path.close()
-                hullFill.color = (c and 0x00FFFFFF) or (0x1F shl 24)     // ~12% alpha fill (overlaps stay legible)
-                canvas.drawPath(path, hullFill)
-                hullStroke.color = (c and 0x00FFFFFF) or (0xC0 shl 24)   // strong coloured outline = the boundary
-                canvas.drawPath(path, hullStroke)
+                hullFill.color = (c and 0x00FFFFFF) or (0x1F shl 24); canvas.drawPath(path, hullFill)
+                hullStroke.color = (c and 0x00FFFFFF) or (0xC0 shl 24); canvas.drawPath(path, hullStroke)
             }
-            for (p in pts) {
+            // depth-cued dots: nearer = larger & more opaque
+            val zMin = sp.firstOrNull()?.second?.get(2) ?: 0f
+            val zMax = sp.lastOrNull()?.second?.get(2) ?: 1f
+            for ((p, s) in sp) {
+                val t = if (zMax > zMin) (s[2] - zMin) / (zMax - zMin) else 0.5f
                 dot.color = colorOf[p.label] ?: Color.GRAY
-                canvas.drawCircle(sx(p.x), sy(p.y), 7f, dot)
+                dot.alpha = (110 + 145 * t).toInt().coerceIn(60, 255)
+                canvas.drawCircle(s[0], s[1], 5f + 4f * t, dot)
             }
             // legend (top-left)
+            dot.alpha = 255
             var ly = 44f
             for (l in labels) {
                 dot.color = colorOf[l] ?: Color.GRAY
