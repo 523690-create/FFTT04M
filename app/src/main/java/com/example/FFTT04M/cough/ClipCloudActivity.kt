@@ -18,9 +18,14 @@ import com.example.FFTT04M.DeviceCaps
 import com.example.FFTT04M.GalleryTransfer
 import com.example.FFTT04M.ViewerActivity
 import com.example.FFTT04M.WavReader
+import android.graphics.Path
 import java.io.File
 import kotlin.concurrent.thread
 import kotlin.math.sqrt
+
+/** Background classes: they don't define the cloud's axes and get no boundary hull — they just fall
+ *  where they may on the plane fitted to the cough/respiratory classes. */
+private val BACKGROUND_LABELS = setOf("noise", "voice", "?")
 
 /**
  * Phase 1.5 — the on-device "clip cloud". Each recording becomes a point: its whole-clip HuBERT
@@ -69,23 +74,28 @@ class ClipCloudActivity : Activity() {
         if (wavs.isEmpty()) { setStatus("No recordings to map."); return }
 
         val pts = ArrayList<Pt>(wavs.size)
-        var done = 0
+        var done = 0; var computed = 0
         for (wav in wavs) {
             if (cancelled) return
             done++
-            if (done % 5 == 0) setStatus("Computing embeddings…  $done / ${wavs.size}")
+            // Cache hit (most opens) is a fast .phon read; only clips never decoded via HuBERT compute.
             val emb = try {
-                val cached = PhonemeDecoder.read(dir, wav.nameWithoutExtension)?.emb
-                cached ?: run {
+                PhonemeDecoder.read(dir, wav.nameWithoutExtension)?.emb ?: run {
                     val d = WavReader.read(wav)
-                    PhonemeDecoder.clipEmbedding(this, wav, d.samples, d.sampleRate)
+                    PhonemeDecoder.clipEmbedding(this, wav, d.samples, d.sampleRate)?.also { computed++ }
                 }
             } catch (_: Throwable) { null } ?: continue
+            if (done % 5 == 0) setStatus(
+                (if (computed > 0) "Computing embeddings ($computed new)…" else "Loading clips…") + "  $done / ${wavs.size}")
             pts.add(Pt(wav, labelFor(dir, wav.nameWithoutExtension), emb))
         }
         if (pts.size < 3) { setStatus("Not enough mappable clips yet (${pts.size}). Decode more first."); return }
 
-        val proj = pca2d(pts.map { it.emb })
+        // Fit the 2 PCA axes on the "important" (non-background) clips only, so the plane captures the
+        // variance AMONG the cough/respiratory classes; noise & voice are then projected onto that same
+        // plane and fall where they may instead of dominating the axes.
+        val fit = BooleanArray(pts.size) { pts[it].label !in BACKGROUND_LABELS }
+        val proj = pca2d(pts.map { it.emb }, fit)
         for (i in pts.indices) { pts[i].x = proj[i][0]; pts[i].y = proj[i][1] }
 
         runOnUiThread {
@@ -116,18 +126,23 @@ class ClipCloudActivity : Activity() {
     }
 
     // ---- PCA-2D (z-norm + power iteration with deflation; mirrors BronchitisCloud) ----
-    private fun pca2d(vecs: List<FloatArray>): Array<DoubleArray> {
+    //  The basis (mean/std/covariance/eigenvectors) is fitted on the [fit]-marked clips only; ALL clips
+    //  are then projected onto it. Falls back to all clips if too few are marked.
+    private fun pca2d(vecs: List<FloatArray>, fit: BooleanArray): Array<DoubleArray> {
         val n = vecs.size; val d = vecs[0].size
-        val mean = DoubleArray(d); for (v in vecs) for (i in 0 until d) mean[i] += v[i]
-        for (i in 0 until d) mean[i] /= n
+        val basis = vecs.indices.filter { fit[it] }.let { if (it.size >= 3) it else vecs.indices.toList() }
+        val nb = basis.size
+        val mean = DoubleArray(d); for (i in basis) { val v = vecs[i]; for (j in 0 until d) mean[j] += v[j] }
+        for (j in 0 until d) mean[j] /= nb
         val std = DoubleArray(d)
-        for (v in vecs) for (i in 0 until d) { val e = v[i] - mean[i]; std[i] += e * e }
-        for (i in 0 until d) std[i] = sqrt(std[i] / n).coerceAtLeast(1e-9)
+        for (i in basis) { val v = vecs[i]; for (j in 0 until d) { val e = v[j] - mean[j]; std[j] += e * e } }
+        for (j in 0 until d) std[j] = sqrt(std[j] / nb).coerceAtLeast(1e-9)
+        // z-norm ALL clips with the basis mean/std (so projections are comparable)
         val z = Array(n) { k -> DoubleArray(d) { (vecs[k][it] - mean[it]) / std[it] } }
-        // covariance (upper triangle, mirrored)
+        // covariance over the BASIS rows only → axes capture variance among the important clips
         val cov = Array(d) { DoubleArray(d) }
-        for (v in z) for (i in 0 until d) { val vi = v[i]; for (j in i until d) cov[i][j] += vi * v[j] }
-        for (i in 0 until d) for (j in i until d) { cov[i][j] /= n; cov[j][i] = cov[i][j] }
+        for (i in basis) { val v = z[i]; for (a in 0 until d) { val va = v[a]; for (b in a until d) cov[a][b] += va * v[b] } }
+        for (a in 0 until d) for (b in a until d) { cov[a][b] /= nb; cov[b][a] = cov[a][b] }
         val pc1 = powerIter(cov, d)
         var lam = 0.0; for (i in 0 until d) { var t = 0.0; for (j in 0 until d) t += cov[i][j] * pc1[j]; lam += pc1[i] * t }
         val cov2 = Array(d) { i -> DoubleArray(d) { j -> cov[i][j] - lam * pc1[i] * pc1[j] } }
@@ -160,12 +175,23 @@ class ClipCloudActivity : Activity() {
     ) : View(ctx) {
 
         private val dot = Paint(Paint.ANTI_ALIAS_FLAG)
+        private val hullFill = Paint(Paint.ANTI_ALIAS_FLAG).apply { style = Paint.Style.FILL }
+        private val hullStroke = Paint(Paint.ANTI_ALIAS_FLAG).apply { style = Paint.Style.STROKE; strokeWidth = 2.5f }
         private val legendPaint = Paint(Paint.ANTI_ALIAS_FLAG).apply { color = Color.WHITE; textSize = 30f }
         private val labels = pts.map { it.label }.distinct().sorted()
         private val colorOf = labels.associateWith { classColor(it) }
 
-        private val minX = pts.minOf { it.x }; private val maxX = pts.maxOf { it.x }
-        private val minY = pts.minOf { it.y }; private val maxY = pts.maxOf { it.y }
+        // Class-boundary hulls: a translucent convex hull per non-background class (≥3 points).
+        private val hulls: Map<String, List<DoubleArray>> = pts.groupBy { it.label }
+            .filterKeys { it !in BACKGROUND_LABELS }
+            .mapValues { (_, ps) -> convexHull(ps.map { doubleArrayOf(it.x, it.y) }) }
+            .filterValues { it.size >= 3 }
+
+        // Frame on the important clips so the cough structure fills the view; background points that
+        // land outside just sit near the edges (pan/zoom to reach them).
+        private val framePts = pts.filter { it.label !in BACKGROUND_LABELS }.ifEmpty { pts }
+        private val minX = framePts.minOf { it.x }; private val maxX = framePts.maxOf { it.x }
+        private val minY = framePts.minOf { it.y }; private val maxY = framePts.maxOf { it.y }
 
         private var scale = 1f; private var panX = 0f; private var panY = 0f
         private val scaleGd = ScaleGestureDetector(ctx, object : ScaleGestureDetector.SimpleOnScaleGestureListener() {
@@ -195,6 +221,19 @@ class ClipCloudActivity : Activity() {
         }
 
         override fun onDraw(canvas: Canvas) {
+            // class-boundary hulls (translucent, behind the points)
+            for ((label, hull) in hulls) {
+                val c = colorOf[label] ?: Color.GRAY
+                val path = Path()
+                hull.forEachIndexed { i, p ->
+                    val x = sx(p[0]); val y = sy(p[1]); if (i == 0) path.moveTo(x, y) else path.lineTo(x, y)
+                }
+                path.close()
+                hullFill.color = (c and 0x00FFFFFF) or (0x1F shl 24)     // ~12% alpha fill (overlaps stay legible)
+                canvas.drawPath(path, hullFill)
+                hullStroke.color = (c and 0x00FFFFFF) or (0xC0 shl 24)   // strong coloured outline = the boundary
+                canvas.drawPath(path, hullStroke)
+            }
             for (p in pts) {
                 dot.color = colorOf[p.label] ?: Color.GRAY
                 canvas.drawCircle(sx(p.x), sy(p.y), 7f, dot)
@@ -207,6 +246,26 @@ class ClipCloudActivity : Activity() {
                 canvas.drawText("$l (${pts.count { it.label == l }})", 48f, ly, legendPaint)
                 ly += 40f
             }
+        }
+
+        /** Andrew's monotone-chain convex hull (CCW, no repeated endpoint). */
+        private fun convexHull(input: List<DoubleArray>): List<DoubleArray> {
+            val p = input.distinctBy { it[0] to it[1] }.sortedWith(compareBy({ it[0] }, { it[1] }))
+            if (p.size < 3) return p
+            fun cross(o: DoubleArray, a: DoubleArray, b: DoubleArray) =
+                (a[0] - o[0]) * (b[1] - o[1]) - (a[1] - o[1]) * (b[0] - o[0])
+            val lower = ArrayList<DoubleArray>()
+            for (pt in p) {
+                while (lower.size >= 2 && cross(lower[lower.size - 2], lower[lower.size - 1], pt) <= 0) lower.removeAt(lower.size - 1)
+                lower.add(pt)
+            }
+            val upper = ArrayList<DoubleArray>()
+            for (pt in p.asReversed()) {
+                while (upper.size >= 2 && cross(upper[upper.size - 2], upper[upper.size - 1], pt) <= 0) upper.removeAt(upper.size - 1)
+                upper.add(pt)
+            }
+            lower.removeAt(lower.size - 1); upper.removeAt(upper.size - 1)
+            return lower + upper
         }
 
         companion object {
