@@ -8,6 +8,7 @@
     android:padding="8dp"
     android:fitsSystemWindows="true">
 
+    <!-- Title row: GALLERY heading (horizontal, full width) with the grid/list toggle to its right. -->
     <LinearLayout
         android:layout_width="match_parent"
         android:layout_height="wrap_content"
@@ -15,7 +16,7 @@
         android:orientation="horizontal"
         android:gravity="center_vertical"
         android:paddingHorizontal="8dp"
-        android:layout_marginBottom="8dp">
+        android:layout_marginBottom="6dp">
 
         <TextView
             android:layout_width="0dp"
@@ -25,64 +26,6 @@
             android:text="@string/title_gallery"
             style="@style/TextHeading" />
 
-        <Button
-            android:id="@+id/btnCloud"
-            android:layout_width="wrap_content"
-            android:layout_height="wrap_content"
-            android:text="CLOUD"
-            android:backgroundTint="#CABFFF"
-            android:textColor="#000000"
-            android:textSize="11sp"
-            android:textStyle="bold"
-            android:layout_marginEnd="8dp"
-            style="@style/Widget.MaterialComponents.Button.UnelevatedButton" />
-
-        <Button
-            android:id="@+id/btnShare"
-            android:layout_width="wrap_content"
-            android:layout_height="wrap_content"
-            android:text="SHARE"
-            android:backgroundTint="#90EE90"
-            android:textColor="#000000"
-            android:textSize="11sp"
-            android:textStyle="bold"
-            android:layout_marginEnd="8dp"
-            style="@style/Widget.MaterialComponents.Button.UnelevatedButton" />
-
-        <Button
-            android:id="@+id/btnManual"
-            android:layout_width="wrap_content"
-            android:layout_height="wrap_content"
-            android:text="HELP"
-            android:backgroundTint="#FFFF00"
-            android:textColor="#000000"
-            android:textSize="11sp"
-            android:textStyle="bold"
-            android:layout_marginEnd="8dp"
-            style="@style/Widget.MaterialComponents.Button.UnelevatedButton" />
-
-        <Button
-            android:id="@+id/btnBack"
-            android:layout_width="wrap_content"
-            android:layout_height="wrap_content"
-            android:text="LISTEN"
-            android:backgroundTint="#00FFFF"
-            android:textColor="#000000"
-            android:textSize="11sp"
-            android:textStyle="bold"
-            style="@style/Widget.MaterialComponents.Button.UnelevatedButton" />
-
-    </LinearLayout>
-
-    <!-- Second row: grid/list toggle right-aligned (under the LISTEN button) -->
-    <LinearLayout
-        android:layout_width="match_parent"
-        android:layout_height="wrap_content"
-        android:orientation="horizontal"
-        android:gravity="center_vertical|end"
-        android:paddingHorizontal="8dp"
-        android:layout_marginBottom="4dp">
-
         <ImageButton
             android:id="@+id/btnViewToggle"
             android:layout_width="48dp"
@@ -91,6 +34,67 @@
             android:src="@drawable/ic_view_module"
             android:scaleType="centerInside"
             android:contentDescription="Toggle View" />
+
+    </LinearLayout>
+
+    <!-- Button bar: evenly spread across the row, below the title. -->
+    <LinearLayout
+        android:layout_width="match_parent"
+        android:layout_height="wrap_content"
+        android:orientation="horizontal"
+        android:paddingHorizontal="8dp"
+        android:layout_marginBottom="6dp">
+
+        <Button
+            android:id="@+id/btnCloud"
+            android:layout_width="0dp"
+            android:layout_height="wrap_content"
+            android:layout_weight="1"
+            android:text="CLOUD"
+            android:backgroundTint="#CABFFF"
+            android:textColor="#000000"
+            android:textSize="11sp"
+            android:textStyle="bold"
+            android:layout_marginEnd="6dp"
+            style="@style/Widget.MaterialComponents.Button.UnelevatedButton" />
+
+        <Button
+            android:id="@+id/btnShare"
+            android:layout_width="0dp"
+            android:layout_height="wrap_content"
+            android:layout_weight="1"
+            android:text="SHARE"
+            android:backgroundTint="#90EE90"
+            android:textColor="#000000"
+            android:textSize="11sp"
+            android:textStyle="bold"
+            android:layout_marginEnd="6dp"
+            style="@style/Widget.MaterialComponents.Button.UnelevatedButton" />
+
+        <Button
+            android:id="@+id/btnManual"
+            android:layout_width="0dp"
+            android:layout_height="wrap_content"
+            android:layout_weight="1"
+            android:text="HELP"
+            android:backgroundTint="#FFFF00"
+            android:textColor="#000000"
+            android:textSize="11sp"
+            android:textStyle="bold"
+            android:layout_marginEnd="6dp"
+            style="@style/Widget.MaterialComponents.Button.UnelevatedButton" />
+
+        <Button
+            android:id="@+id/btnBack"
+            android:layout_width="0dp"
+            android:layout_height="wrap_content"
+            android:layout_weight="1"
+            android:text="LISTEN"
+            android:backgroundTint="#00FFFF"
+            android:textColor="#000000"
+            android:textSize="11sp"
+            android:textStyle="bold"
+            style="@style/Widget.MaterialComponents.Button.UnelevatedButton" />
 
     </LinearLayout>
 
