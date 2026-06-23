@@ -93,6 +93,12 @@
             android:screenOrientation="fullSensor" />
 
         <activity
+            android:name=".cough.ClipCloudActivity"
+            android:exported="false"
+            android:label="Clip Cloud"
+            android:screenOrientation="fullSensor" />
+
+        <activity
             android:name=".cough.CoughCaptureActivity"
             android:exported="false"
             android:label="Cough Auto-Capture"

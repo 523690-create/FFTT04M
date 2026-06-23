@@ -92,8 +92,10 @@ object PhonemeDecoder {
 
     private fun JSONArray.toDoubleArray() = DoubleArray(length()) { getDouble(it) }
 
-    /** word = ordered phoneme codes; letter/label = the dominant class by non-`?` count. */
-    data class Decoded(val letter: String, val label: String, val word: List<String>)
+    /** word = ordered phoneme codes; letter/label = the dominant class by non-`?` count. [emb] is the
+     *  whole-clip mean HuBERT embedding (768-dim) when decoded via HuBERT — cached for the clip-cloud
+     *  view so it need not re-run the model; null on the DSP path. */
+    data class Decoded(val letter: String, val label: String, val word: List<String>, val emb: FloatArray? = null)
 
     fun decode(ctx: Context, pcm: FloatArray, sr: Int): Decoded? {
         ensureLoaded(ctx)
@@ -106,8 +108,12 @@ object PhonemeDecoder {
         // Per-window feature vectors. HuBERT path: one model pass → mean-pool frames per window
         // (768-dim), returns null whole-clip on inference failure → null decode. DSP path: 13-dim
         // fragVec per window (null for too-short windows → "?").
+        var clipEmb: FloatArray? = null
         val vecs: List<DoubleArray?> = if (useHubert) {
-            hubertWindowVecs(ctx, x, sr, frags) ?: return null
+            val emb = HubertFeatures.frameEmbeddings(ctx, x, sr) ?: return null
+            if (emb.isEmpty()) return null
+            clipEmb = meanFrames(emb)                       // whole-clip embedding for the cloud
+            hubertWindowVecs(emb, x.size, sr, frags)
         } else {
             frags.map { (sMs, eMs) -> fragVec(x, sr, sMs, eMs) }
         }
@@ -121,17 +127,14 @@ object PhonemeDecoder {
         }
         val letter = word.asSequence().filter { it != "?" }.map { it.takeWhile { c -> c.isLetter() } }
             .groupingBy { it }.eachCount().maxByOrNull { it.value }?.key ?: "?"
-        return Decoded(letter, labelByLetter[letter] ?: "?", word)
+        return Decoded(letter, labelByLetter[letter] ?: "?", word, clipEmb)
     }
 
-    /** HuBERT per-window features: one model pass → mean-pool the frames falling in each fixed-grid
-     *  window (768-dim), byte-for-byte the same pooling the desktop codebook build uses. Null on any
-     *  inference failure. */
-    private fun hubertWindowVecs(ctx: Context, x: FloatArray, sr: Int, frags: List<Pair<Int, Int>>): List<DoubleArray>? {
-        val emb = HubertFeatures.frameEmbeddings(ctx, x, sr) ?: return null
-        if (emb.isEmpty()) return null
+    /** HuBERT per-window features: mean-pool the frames falling in each fixed-grid window (768-dim),
+     *  byte-for-byte the same pooling the desktop codebook build uses. */
+    private fun hubertWindowVecs(emb: Array<FloatArray>, nSamples: Int, sr: Int, frags: List<Pair<Int, Int>>): List<DoubleArray> {
         val t = emb.size; val h = emb[0].size
-        val durMs = (x.size.toLong() * 1000 / sr).toInt().coerceAtLeast(1)
+        val durMs = (nSamples.toLong() * 1000 / sr).toInt().coerceAtLeast(1)
         val msPerFrame = durMs.toDouble() / t
         return frags.map { (sMs, eMs) ->
             val f0 = (sMs / msPerFrame).toInt().coerceIn(0, t - 1)
@@ -143,12 +146,31 @@ object PhonemeDecoder {
         }
     }
 
-    /** Decode [pcm] and write the result to `<wav>.phon` (JSON). Never touches the user's `.txt`. */
+    /** Whole-clip embedding = mean over all HuBERT frames (matches BronchitisCloud's per-clip vector). */
+    private fun meanFrames(emb: Array<FloatArray>): FloatArray {
+        val h = emb[0].size; val v = FloatArray(h)
+        for (f in emb) for (j in 0 until h) v[j] += f[j]
+        for (j in 0 until h) v[j] /= emb.size
+        return v
+    }
+
+    /** Whole-clip HuBERT embedding for the cloud (or null on DSP / failure). Reuses the cached `.phon`
+     *  embedding when present so the model isn't re-run; otherwise decodes once (which caches it). */
+    fun clipEmbedding(ctx: Context, wav: File, pcm: FloatArray, sr: Int): FloatArray? {
+        read(wav.parentFile ?: return null, wav.nameWithoutExtension)?.emb?.let { return it }
+        val d = decode(ctx, pcm, sr) ?: return null
+        annotate(ctx, wav, pcm, sr)   // persist (incl. emb) so next open is free
+        return d.emb
+    }
+
+    /** Decode [pcm] and write the result to `<wav>.phon` (JSON). Never touches the user's `.txt`.
+     *  On the HuBERT path also stores the whole-clip embedding ("emb") for the clip-cloud view. */
     fun annotate(ctx: Context, wav: File, pcm: FloatArray, sr: Int) {
         val d = decode(ctx, pcm, sr) ?: return
         val out = File(wav.parentFile, wav.nameWithoutExtension + ".phon")
         val o = JSONObject()
             .put("letter", d.letter).put("label", d.label).put("word", JSONArray(d.word))
+        d.emb?.let { e -> o.put("emb", JSONArray().apply { for (v in e) put(v.toDouble()) }) }
         runCatching { out.writeText(o.toString()) }
     }
 
@@ -160,7 +182,9 @@ object PhonemeDecoder {
             val o = JSONObject(f.readText())
             val wa = o.optJSONArray("word")
             val word = if (wa != null) List(wa.length()) { wa.getString(it) } else emptyList()
-            Decoded(o.optString("letter", "?"), o.optString("label", "?"), word)
+            val ea = o.optJSONArray("emb")
+            val emb = if (ea != null) FloatArray(ea.length()) { ea.getDouble(it).toFloat() } else null
+            Decoded(o.optString("letter", "?"), o.optString("label", "?"), word, emb)
         } catch (_: Throwable) { null }
     }
 

@@ -236,6 +236,9 @@ class GalleryActivity : AppCompatActivity() {
             startActivity(android.content.Intent(this, ManualActivity::class.java))
         }
         findViewById<Button>(R.id.btnShare).setOnClickListener { showShareDialog() }
+        findViewById<Button>(R.id.btnCloud).setOnClickListener {
+            startActivity(Intent(this, com.example.FFTT04M.cough.ClipCloudActivity::class.java))
+        }
     }
 
     /** SHARE → Bluetooth (paired, no network), Wi-Fi QR (same LAN), or file (any network). */
