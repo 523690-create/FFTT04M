@@ -36,7 +36,11 @@ The home screen shows the live microphone spectrogram (frequency vs. time, colou
 A grid/list of saved recordings, each with a thumbnail and filename.
 
 - **Tap** a recording to open it in the **FFT analysis** viewer.
-- The grid/list toggle (top-left) switches layout.
+- Under each name is the clip's **auto classification** — the inferred class (e.g.
+  *dry hacking (DH)*) and the phoneme sequence it was decoded into (see
+  *On-device classification*).
+- The grid/list toggle (top-right) switches layout.
+- **CLOUD** opens the **Clip Cloud** — an acoustic map of your recordings (see *Clip Cloud*).
 - **SHARE** sends/receives recordings between devices (see *Sharing*).
 - **HELP** opens this manual. **LISTEN** returns to the live screen.
 
@@ -71,6 +75,44 @@ A continuous/discrete wavelet view of the recording, with two tabs:
 
 New recordings default to **CWT, max level/order, zero threshold, max safe sample rate**.
 All settings persist per recording.
+
+---
+
+## On-device classification (phoneme decode)
+
+Every recording is analysed on the phone and given a best-guess **class** — cough type
+(dry, dry-hacking, typical-bronchitis, croup…), snoring, sneeze, voice, or noise. It appears
+under each clip in the Gallery, e.g. `= dry hacking (DH): DH1 D8 N37 …`.
+
+How it works: the clip is split into short overlapping windows; each window is matched to the
+nearest entry in a learned **codebook** of acoustic units ("phonemes"), producing a sequence
+of codes (a "word"). The dominant code's class becomes the clip's label. On capable phones
+(≈3 GB+ RAM) the windows are described with **HuBERT** speech-model features for much higher
+accuracy; older phones fall back to a lighter signal-processing version automatically.
+
+**Your labels train it.** Add a comment with the **NOTE** button in the Viewer — e.g.
+"dry hacking", "snoring" — and it becomes a training label the next time the codebook is
+rebuilt. You can label a whole clip by its main sound even if it also contains noise or
+voice; the rebuild routes those background stretches back to noise/voice on its own.
+
+## Clip Cloud
+
+The **CLOUD** button (Gallery) plots every recording as a point on an **acoustic map**: clips
+that sound alike sit close together. It uses the same HuBERT features as the classifier,
+projected from hundreds of dimensions down to a rotatable 3-D view (principal-component
+analysis).
+
+- **Colour = class** (your manual comment if present, otherwise the auto-decode). The legend
+  top-left lists each class and its count.
+- **Coloured outlines** bound each cough/respiratory class; where two outlines overlap, those
+  classes sound similar.
+- **One-finger drag rotates** the cloud in 3-D. The flat view shows the two biggest axes of
+  variation; rotating brings in the **third** axis (depth), which can pull apart clusters that
+  overlap head-on.
+- **Two-finger drag pans**, **pinch zooms**, **tap a point** opens that clip in the Viewer.
+
+Available on HuBERT-capable phones only. The first open computes and caches each clip's
+position (with a progress count); later opens are quick.
 
 ---
 

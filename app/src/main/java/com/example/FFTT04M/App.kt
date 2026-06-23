@@ -34,7 +34,13 @@ class App : Application() {
                 val content = a.findViewById<View>(android.R.id.content) ?: return
                 ViewCompat.setOnApplyWindowInsetsListener(content) { v, insets ->
                     val bars = insets.getInsets(WindowInsetsCompat.Type.systemBars())
-                    v.updatePadding(left = bars.left, top = bars.top, right = bars.right, bottom = bars.bottom)
+                    // Pad to ~0.7x the bar insets so content reclaims a bit of the bar space (narrower
+                    // gutters); combined with the transparent bars + black windowBackground this keeps
+                    // the system clock/nav visible over dark app content instead of a white block.
+                    val f = 0.7f
+                    v.updatePadding(
+                        left = (bars.left * f).toInt(), top = (bars.top * f).toInt(),
+                        right = (bars.right * f).toInt(), bottom = (bars.bottom * f).toInt())
                     WindowInsetsCompat.CONSUMED
                 }
                 ViewCompat.requestApplyInsets(content)
