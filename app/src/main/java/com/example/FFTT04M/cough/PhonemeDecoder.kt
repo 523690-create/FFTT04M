@@ -1,6 +1,7 @@
 package com.example.FFTT04M.cough
 
 import android.content.Context
+import com.example.FFTT04M.DeviceCaps
 import org.json.JSONArray
 import org.json.JSONObject
 import java.io.File
@@ -20,9 +21,13 @@ import kotlin.math.sqrt
  * class. `WholeClipFeatures` is byte-identical to the desktop's, so the codebook centroids apply
  * unchanged.
  *
- * Codebook asset `codebook.json` (the desktop's <tag>_phonemes.json):
- *   { "norm": { "mean":[13], "std":[13] },
- *     "phonemes": [ { "code":"S3", "letter":"S", "label":"snoring", "centroid":[13], "radius":d }, … ] }
+ * Two codebooks ship; the device picks one in [ensureLoaded]:
+ *   - `codebook_hubert.json` (768-dim, the 89%-CV gold standard) on RAM-capable phones, paired with
+ *     the bundled HuBERT model — features come from [HubertFeatures] instead of the DSP path.
+ *   - `codebook.json` (13-dim DSP) everywhere else, and as the fallback if the model won't load.
+ * Both share the schema:
+ *   { "featureType": "hubert768"|"dsp13", "norm": { "mean":[D], "std":[D] },
+ *     "phonemes": [ { "code":"S3", "letter":"S", "label":"snoring", "centroid":[D], "radius":d }, … ] }
  * Missing/unparsable asset ⇒ decoding silently disabled (no crash).
  */
 object PhonemeDecoder {
@@ -39,33 +44,51 @@ object PhonemeDecoder {
     private var std: DoubleArray? = null
     private var phonemes: List<Phoneme> = emptyList()
     private var labelByLetter: Map<String, String> = emptyMap()
+    private var useHubert = false               // true → 768-dim HuBERT codebook; false → 13-dim DSP
 
     val isReady: Boolean get() = phonemes.isNotEmpty()
+    /** "hubert768" (gold-standard path) or "dsp13" (fallback) — which codebook this device loaded. */
+    val featureType: String get() = if (useHubert) "hubert768" else "dsp13"
 
     @Synchronized
     fun ensureLoaded(ctx: Context) {
         if (loaded) return
         loaded = true
-        try {
-            val txt = ctx.assets.open("codebook.json").bufferedReader().use { it.readText() }
-            val o = JSONObject(txt)
-            val norm = o.getJSONObject("norm")
-            mean = norm.getJSONArray("mean").toDoubleArray()
-            std = norm.getJSONArray("std").toDoubleArray()
-            val pa = o.getJSONArray("phonemes")
-            val list = ArrayList<Phoneme>(pa.length())
-            for (i in 0 until pa.length()) {
-                val p = pa.getJSONObject(i)
-                list.add(Phoneme(
-                    p.getString("code"), p.getString("letter"), p.getString("label"),
-                    p.getJSONArray("centroid").toDoubleArray(), p.getDouble("radius")))
+        // Prefer the HuBERT gold-standard codebook on capable phones, but only if the model actually
+        // loads (RAM floor + bundled asset present); otherwise fall back to the always-bundled DSP one.
+        if (DeviceCaps.hubertAllowed(ctx) && loadCodebook(ctx, "codebook_hubert.json")) {
+            if (HubertFeatures.ensureLoaded(ctx)) {
+                useHubert = true
+            } else {
+                clearCodebook(); loadCodebook(ctx, "codebook.json")   // model wouldn't load → DSP
             }
-            phonemes = list
-            labelByLetter = list.associate { it.letter to it.label }
-        } catch (_: Throwable) {
-            phonemes = emptyList()   // no bundled codebook → feature disabled, no crash
+        } else {
+            loadCodebook(ctx, "codebook.json")
         }
     }
+
+    /** Parse a codebook asset into the active fields. Returns true on a usable (non-empty) codebook. */
+    private fun loadCodebook(ctx: Context, asset: String): Boolean = try {
+        val o = JSONObject(ctx.assets.open(asset).bufferedReader().use { it.readText() })
+        val norm = o.getJSONObject("norm")
+        mean = norm.getJSONArray("mean").toDoubleArray()
+        std = norm.getJSONArray("std").toDoubleArray()
+        val pa = o.getJSONArray("phonemes")
+        val list = ArrayList<Phoneme>(pa.length())
+        for (i in 0 until pa.length()) {
+            val p = pa.getJSONObject(i)
+            list.add(Phoneme(
+                p.getString("code"), p.getString("letter"), p.getString("label"),
+                p.getJSONArray("centroid").toDoubleArray(), p.getDouble("radius")))
+        }
+        phonemes = list
+        labelByLetter = list.associate { it.letter to it.label }
+        list.isNotEmpty()
+    } catch (_: Throwable) {
+        clearCodebook(); false   // missing/unparsable asset → feature disabled, no crash
+    }
+
+    private fun clearCodebook() { phonemes = emptyList(); mean = null; std = null; labelByLetter = emptyMap() }
 
     private fun JSONArray.toDoubleArray() = DoubleArray(length()) { getDouble(it) }
 
@@ -76,20 +99,48 @@ object PhonemeDecoder {
         ensureLoaded(ctx)
         val mu = mean ?: return null
         val sd = std ?: return null
-        if (phonemes.isEmpty() || mu.size != 13) return null
+        if (phonemes.isEmpty()) return null
+        val dim = mu.size
         val x = pcm.copyOf().also { rmsNormalize(it) }   // match the codebook's RMS-normalised training
-        val word = ArrayList<String>()
-        for ((sMs, eMs) in fractionate(x, sr)) {
-            val v = fragVec(x, sr, sMs, eMs)
-            if (v == null) { word.add("?"); continue }
-            for (i in 0 until 13) v[i] = (v[i] - mu[i]) / sd[i]
+        val frags = fractionate(x, sr)
+        // Per-window feature vectors. HuBERT path: one model pass → mean-pool frames per window
+        // (768-dim), returns null whole-clip on inference failure → null decode. DSP path: 13-dim
+        // fragVec per window (null for too-short windows → "?").
+        val vecs: List<DoubleArray?> = if (useHubert) {
+            hubertWindowVecs(ctx, x, sr, frags) ?: return null
+        } else {
+            frags.map { (sMs, eMs) -> fragVec(x, sr, sMs, eMs) }
+        }
+        val word = ArrayList<String>(vecs.size)
+        for (v in vecs) {
+            if (v == null || v.size != dim) { word.add("?"); continue }
+            val z = DoubleArray(dim) { (v[it] - mu[it]) / sd[it] }
             var best: Phoneme? = null; var bestD = Double.MAX_VALUE
-            for (p in phonemes) { val d = dist(v, p.centroid); if (d < bestD) { bestD = d; best = p } }
+            for (p in phonemes) { val d = dist(z, p.centroid); if (d < bestD) { bestD = d; best = p } }
             word.add(if (best != null && bestD <= best.radius) best.code else "?")
         }
         val letter = word.asSequence().filter { it != "?" }.map { it.takeWhile { c -> c.isLetter() } }
             .groupingBy { it }.eachCount().maxByOrNull { it.value }?.key ?: "?"
         return Decoded(letter, labelByLetter[letter] ?: "?", word)
+    }
+
+    /** HuBERT per-window features: one model pass → mean-pool the frames falling in each fixed-grid
+     *  window (768-dim), byte-for-byte the same pooling the desktop codebook build uses. Null on any
+     *  inference failure. */
+    private fun hubertWindowVecs(ctx: Context, x: FloatArray, sr: Int, frags: List<Pair<Int, Int>>): List<DoubleArray>? {
+        val emb = HubertFeatures.frameEmbeddings(ctx, x, sr) ?: return null
+        if (emb.isEmpty()) return null
+        val t = emb.size; val h = emb[0].size
+        val durMs = (x.size.toLong() * 1000 / sr).toInt().coerceAtLeast(1)
+        val msPerFrame = durMs.toDouble() / t
+        return frags.map { (sMs, eMs) ->
+            val f0 = (sMs / msPerFrame).toInt().coerceIn(0, t - 1)
+            val f1 = (eMs / msPerFrame).toInt().coerceIn(f0 + 1, t)
+            val v = DoubleArray(h); var n = 0
+            for (f in f0 until f1) { val ef = emb[f]; for (j in 0 until h) v[j] += ef[j]; n++ }
+            if (n > 0) for (j in 0 until h) v[j] /= n
+            v
+        }
     }
 
     /** Decode [pcm] and write the result to `<wav>.phon` (JSON). Never touches the user's `.txt`. */

@@ -54,6 +54,12 @@ android {
         disable.add("MissingPermission")
         abortOnError = false
     }
+
+    // Don't compress the bundled HuBERT model — it's already dense (compression wastes build time and
+    // gains almost nothing), and leaving it stored lets the staged copy / mmap stay cheap.
+    androidResources {
+        noCompress += "onnx"
+    }
 }
 
 // Rename APK

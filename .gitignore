@@ -42,3 +42,8 @@ xcuserdata/
 *.log
 *.hprof
 .DS_Store
+
+# Bundled HuBERT model — 377 MB fp32, exceeds GitHub's 100 MB limit. Bundled into the APK at build
+# time for the on-device gold-standard path, but kept out of git. Regenerate with
+# FFTT04D/desktop/native/hubert/export_hubert_onnx.py, then copy into app/src/main/assets/.
+app/src/main/assets/hubert_base.onnx

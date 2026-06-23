@@ -38,4 +38,19 @@ object DeviceCaps {
 
     /** Heavy per-pixel enhancement filters (Gabor bank, Frangi, NLM) need at least mid tier. */
     fun heavyEnhancementsAllowed(ctx: Context): Boolean = tier(ctx) >= 1
+
+    /** Total physical RAM in bytes (0 if unknown). */
+    fun totalRamBytes(ctx: Context): Long = try {
+        val am = ctx.getSystemService(Context.ACTIVITY_SERVICE) as ActivityManager
+        ActivityManager.MemoryInfo().also { am.getMemoryInfo(it) }.totalMem
+    } catch (_: Exception) { 0L }
+
+    /**
+     * On-device HuBERT decode (the 89%-CV gold-standard path) — runs the 377 MB fp32 model, so it
+     * needs headroom. Gated on RAM rather than tier because minSdk already forces every install to
+     * tier 2; the real risk is OOM on small-RAM phones. Floor ≈ 3 GB (a nominal-4 GB device such as
+     * the Pixel 3a reports ~3.6 GB, which the probe ran without OOM; a true 3 GB device clears it).
+     * Below the floor, PhonemeDecoder falls back to the DSP codebook.
+     */
+    fun hubertAllowed(ctx: Context): Boolean = totalRamBytes(ctx) >= 3L * 1000 * 1000 * 1000
 }
