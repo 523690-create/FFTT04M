@@ -434,21 +434,31 @@ class GalleryActivity : AppCompatActivity() {
             .show()
     }
 
-    /** Actually remove the transferred clips + sidecars. ONLY call once the transfer is confirmed. */
+    /** Actually remove the transferred clips + sidecars. ONLY call once the transfer is confirmed.
+     *  Runs on a background thread: deleting many clips (5 file ops each) on the main thread froze the
+     *  UI and tripped an ANR when a large batch was offered. */
     private fun performDeletion(transferred: List<File>, ackedCount: Int) {
-        var deleted = 0
-        transferred.forEach { wav ->
-            val base = wav.nameWithoutExtension
-            val parent = wav.parentFile
-            if (wav.exists() && wav.delete()) deleted++
-            File(parent, "$base.png").delete()
-            File(parent, "$base.txt").delete()
-            File(parent, "$base.phon").delete()
-            File(parent, "$base.json").delete()
+        val toDelete = transferred.toList()   // snapshot
+        Toast.makeText(this, "Deleting ${toDelete.size} transferred recording(s)…", Toast.LENGTH_SHORT).show()
+        thread {
+            var deleted = 0
+            for (wav in toDelete) {
+                val base = wav.nameWithoutExtension
+                val parent = wav.parentFile
+                if (wav.exists() && wav.delete()) deleted++
+                File(parent, "$base.png").delete()
+                File(parent, "$base.txt").delete()
+                File(parent, "$base.phon").delete()
+                File(parent, "$base.json").delete()
+            }
+            android.util.Log.i("FFTT04M",
+                "USB: deleted $deleted/${toDelete.size} transferred recording(s) (desktop ack reported $ackedCount)")
+            runOnUiThread {
+                if (isFinishing) return@runOnUiThread
+                Toast.makeText(this, "Deleted $deleted transferred recording(s)", Toast.LENGTH_LONG).show()
+                loadFiles()
+            }
         }
-        android.util.Log.i("FFTT04M", "USB: deleted $deleted/$ackedCount confirmed-transferred recording(s)")
-        Toast.makeText(this, "Deleted $deleted transferred recording(s)", Toast.LENGTH_LONG).show()
-        loadFiles()
     }
 
     /** Build a .fftt bundle and hand it to the system share sheet (Quick Share / Bluetooth / email /
