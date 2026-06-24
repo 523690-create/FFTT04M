@@ -46,4 +46,46 @@ object AutoReject {
         if (moved) Log.i(TAG, "auto-rejected $base → $SUBDIR/ (label=${decoded.label} conf=${"%.2f".format(decoded.confidence)})")
         return moved
     }
+
+    data class Sweep(val scanned: Int, val rejected: Int)
+
+    /** One-time batch pass over an existing gallery: re-decode each clip with the current codebook and
+     *  auto-reject the high-confidence non-coughs. Skips user-commented clips. Cancellable; reports
+     *  progress. Runs on a caller-supplied background thread. */
+    fun sweep(ctx: Context, dir: File, onProgress: (Int, Int) -> Unit, cancelled: () -> Boolean): Sweep {
+        val wavs = dir.listFiles { f -> f.isFile && f.extension.equals("wav", true) } ?: return Sweep(0, 0)
+        var rejected = 0
+        for ((i, wav) in wavs.withIndex()) {
+            if (cancelled()) break
+            onProgress(i + 1, wavs.size)
+            if (File(dir, "${wav.nameWithoutExtension}.txt").isFile) continue   // commented → skip (fast path)
+            val data = runCatching { com.example.FFTT04M.WavReader.read(wav) }.getOrNull() ?: continue
+            val decoded = PhonemeDecoder.decode(ctx, data.samples, data.sampleRate) ?: continue
+            if (reject(ctx, wav, decoded)) rejected++
+        }
+        Log.i(TAG, "sweep: rejected $rejected of ${wavs.size}")
+        return Sweep(wavs.size, rejected)
+    }
+
+    // ---- recover/manage the rejected/ folder ------------------------------------------------------
+    fun rejectedDir(dir: File) = File(dir, SUBDIR)
+    fun rejectedWavs(dir: File): List<File> =
+        rejectedDir(dir).listFiles { f -> f.isFile && f.extension.equals("wav", true) }?.toList() ?: emptyList()
+
+    /** Move every rejected file back to the gallery. Returns the number of recordings restored. */
+    fun restoreAll(dir: File): Int {
+        val trash = rejectedDir(dir); var n = 0
+        trash.listFiles()?.forEach { f ->
+            if (f.isFile && runCatching { f.renameTo(File(dir, f.name)) }.getOrDefault(false) &&
+                f.extension.equals("wav", true)) n++
+        }
+        return n
+    }
+
+    /** Permanently delete everything in rejected/. Returns the number of recordings removed. */
+    fun deleteAll(dir: File): Int {
+        val trash = rejectedDir(dir); var n = 0
+        trash.listFiles()?.forEach { f -> val wav = f.extension.equals("wav", true); if (f.delete() && wav) n++ }
+        return n
+    }
 }

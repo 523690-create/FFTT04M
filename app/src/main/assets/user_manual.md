@@ -43,6 +43,10 @@ A grid/list of saved recordings, each with a thumbnail and filename.
 - **CLOUD** opens the **Clip Cloud** — an acoustic map of your recordings (see *Clip Cloud*).
 - **SHARE** sends/receives recordings between devices (see *Sharing*).
 - **HELP** opens this manual. **LISTEN** returns to the live screen.
+- The **⋮** menu (top-right) has **Gallery tools**: *Auto-reject non-cough clips* sweeps the whole
+  gallery and moves high-confidence noise/voice captures into the recoverable `rejected/` folder (see
+  *On-device classification → Auto-reject*); *Rejected clips (N)* lets you **restore all** or delete
+  them.
 
 ### FFT analysis (Viewer)
 Detailed FFT spectrogram of a saved recording, with three tabs:

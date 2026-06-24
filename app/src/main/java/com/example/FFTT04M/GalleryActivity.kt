@@ -239,6 +239,82 @@ class GalleryActivity : AppCompatActivity() {
         findViewById<Button>(R.id.btnCloud).setOnClickListener {
             startActivity(Intent(this, com.example.FFTT04M.cough.ClipCloudActivity::class.java))
         }
+        findViewById<Button>(R.id.btnGalleryMenu).setOnClickListener { showGalleryMenu() }
+    }
+
+    // ---- Gallery tools menu: batch auto-reject + recover rejected clips --------------------------
+    private fun showGalleryMenu() {
+        val dir = GalleryTransfer.recordingsDir(this) ?: filesDir
+        val rejectedN = com.example.FFTT04M.cough.AutoReject.rejectedWavs(dir).size
+        val items = arrayOf("Auto-reject non-cough clips", "Rejected clips ($rejectedN)")
+        AlertDialog.Builder(this)
+            .setTitle("Gallery tools")
+            .setItems(items) { _, which ->
+                when (which) {
+                    0 -> confirmAndSweep(dir)
+                    1 -> showRejectedDialog(dir)
+                }
+            }.show()
+    }
+
+    private fun confirmAndSweep(dir: File) {
+        if (DeviceCaps.tier(this) < 1) {
+            Toast.makeText(this, "Auto-reject needs a newer device (Tier 1+)", Toast.LENGTH_LONG).show(); return
+        }
+        AlertDialog.Builder(this)
+            .setTitle("Auto-reject non-cough clips?")
+            .setMessage("Scans every clip and moves high-confidence noise/voice captures into a recoverable " +
+                "'rejected' folder. Commented clips are never touched. This can take a minute.")
+            .setPositiveButton("Scan") { _, _ -> runSweep(dir) }
+            .setNegativeButton("Cancel", null)
+            .show()
+    }
+
+    private fun runSweep(dir: File) {
+        val progress = AlertDialog.Builder(this)
+            .setTitle("Auto-rejecting…").setMessage("Starting…").setCancelable(false)
+            .setNegativeButton("Stop", null).create()
+        val cancel = java.util.concurrent.atomic.AtomicBoolean(false)
+        progress.setOnShowListener {
+            progress.getButton(AlertDialog.BUTTON_NEGATIVE).setOnClickListener { cancel.set(true) }
+        }
+        progress.show()
+        thread {
+            val res = com.example.FFTT04M.cough.AutoReject.sweep(this, dir,
+                onProgress = { i, n -> if (i % 5 == 0 || i == n) runOnUiThread {
+                    if (progress.isShowing) progress.setMessage("Scanned $i / $n…") } },
+                cancelled = { cancel.get() })
+            runOnUiThread {
+                if (progress.isShowing) progress.dismiss()
+                if (!isFinishing) {
+                    Toast.makeText(this, "Rejected ${res.rejected} non-cough clip(s) of ${res.scanned}", Toast.LENGTH_LONG).show()
+                    loadFiles()
+                }
+            }
+        }
+    }
+
+    private fun showRejectedDialog(dir: File) {
+        val n = com.example.FFTT04M.cough.AutoReject.rejectedWavs(dir).size
+        if (n == 0) { Toast.makeText(this, "No rejected clips", Toast.LENGTH_SHORT).show(); return }
+        AlertDialog.Builder(this)
+            .setTitle("Rejected clips")
+            .setMessage("$n auto-rejected clip(s) held in:\n${com.example.FFTT04M.cough.AutoReject.rejectedDir(dir).absolutePath}\n\n" +
+                "Restore them all to the gallery, or delete them permanently?")
+            .setPositiveButton("Restore all") { _, _ ->
+                thread {
+                    val r = com.example.FFTT04M.cough.AutoReject.restoreAll(dir)
+                    runOnUiThread { if (!isFinishing) { Toast.makeText(this, "Restored $r clip(s)", Toast.LENGTH_LONG).show(); loadFiles() } }
+                }
+            }
+            .setNeutralButton("Delete all") { _, _ ->
+                thread {
+                    val r = com.example.FFTT04M.cough.AutoReject.deleteAll(dir)
+                    runOnUiThread { if (!isFinishing) Toast.makeText(this, "Deleted $r rejected clip(s)", Toast.LENGTH_LONG).show() }
+                }
+            }
+            .setNegativeButton("Close", null)
+            .show()
     }
 
     /** SHARE → Bluetooth (paired, no network), Wi-Fi QR (same LAN), or file (any network). */

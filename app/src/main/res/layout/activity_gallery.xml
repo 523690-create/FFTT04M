@@ -35,6 +35,19 @@
             android:scaleType="centerInside"
             android:contentDescription="Toggle View" />
 
+        <Button
+            android:id="@+id/btnGalleryMenu"
+            android:layout_width="44dp"
+            android:layout_height="40dp"
+            android:minWidth="0dp"
+            android:padding="0dp"
+            android:text="⋮"
+            android:textSize="22sp"
+            android:textStyle="bold"
+            android:textColor="#FFFFFF"
+            android:background="?attr/selectableItemBackgroundBorderless"
+            android:contentDescription="More" />
+
     </LinearLayout>
 
     <!-- Button bar: evenly spread across the row, below the title. -->
