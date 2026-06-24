@@ -53,7 +53,11 @@ Detailed FFT spectrogram of a saved recording, with three tabs:
   PLAYBACK**, and **TIME GRID**.
 
 Top bar: **GALLERY**, **LISTEN**, **WAVELET** (analysis of the same file), **NOTE**
-(add a comment / refresh the thumbnail), **PLAY** (raw audio playback).
+(comment / label the clip — see below — and refresh the thumbnail), **PLAY** (raw audio playback).
+
+The **NOTE** dialog offers **quick-label radio buttons** for the common classes (dry hacking, typical
+bronchitis, dry, croup, snoring, sneeze, voice, noise) — one tap fills the field — plus a free-text box
+for anything custom. The label you save trains the codebook (see *On-device classification*).
 
 - **PROCESSED PLAYBACK** plays the recording **as you see it** — EQ, FILTER, and the ENHANCE
   post-processors are all applied to the sound (reconstructed from the displayed spectrogram with
@@ -94,6 +98,12 @@ accuracy; older phones fall back to a lighter signal-processing version automati
 "dry hacking", "snoring" — and it becomes a training label the next time the codebook is
 rebuilt. You can label a whole clip by its main sound even if it also contains noise or
 voice; the rebuild routes those background stretches back to noise/voice on its own.
+
+**Auto-reject (capable phones, Tier 1+).** When the detector misfires on background noise or speech and
+the decoder is highly confident the capture is non-cough, the clip is moved out of the gallery into a
+recoverable `rejected/` subfolder — keeping the gallery to real coughs. It only ever affects fresh,
+un-commented captures (anything you've labelled is hands-off); recover a clip by moving it back out of
+`<recordings>/rejected/`.
 
 ## Clip Cloud
 

@@ -95,7 +95,8 @@ object PhonemeDecoder {
     /** word = ordered phoneme codes; letter/label = the dominant class by non-`?` count. [emb] is the
      *  whole-clip mean HuBERT embedding (768-dim) when decoded via HuBERT — cached for the clip-cloud
      *  view so it need not re-run the model; null on the DSP path. */
-    data class Decoded(val letter: String, val label: String, val word: List<String>, val emb: FloatArray? = null)
+    data class Decoded(val letter: String, val label: String, val word: List<String>, val emb: FloatArray? = null,
+                       val confidence: Double = 0.0)
 
     fun decode(ctx: Context, pcm: FloatArray, sr: Int): Decoded? {
         ensureLoaded(ctx)
@@ -125,9 +126,14 @@ object PhonemeDecoder {
             for (p in phonemes) { val d = dist(z, p.centroid); if (d < bestD) { bestD = d; best = p } }
             word.add(if (best != null && bestD <= best.radius) best.code else "?")
         }
-        val letter = word.asSequence().filter { it != "?" }.map { it.takeWhile { c -> c.isLetter() } }
-            .groupingBy { it }.eachCount().maxByOrNull { it.value }?.key ?: "?"
-        return Decoded(letter, labelByLetter[letter] ?: "?", word, clipEmb)
+        val letterCounts = word.asSequence().filter { it != "?" }.map { it.takeWhile { c -> c.isLetter() } }
+            .groupingBy { it }.eachCount()
+        val nonQ = letterCounts.values.sum()
+        val dom = letterCounts.maxByOrNull { it.value }
+        val letter = dom?.key ?: "?"
+        // Confidence = the dominant letter's share of the assigned (non-?) windows.
+        val confidence = if (nonQ > 0 && dom != null) dom.value.toDouble() / nonQ else 0.0
+        return Decoded(letter, labelByLetter[letter] ?: "?", word, clipEmb, confidence)
     }
 
     /** HuBERT per-window features: mean-pool the frames falling in each fixed-grid window (768-dim),
@@ -165,13 +171,14 @@ object PhonemeDecoder {
 
     /** Decode [pcm] and write the result to `<wav>.phon` (JSON). Never touches the user's `.txt`.
      *  On the HuBERT path also stores the whole-clip embedding ("emb") for the clip-cloud view. */
-    fun annotate(ctx: Context, wav: File, pcm: FloatArray, sr: Int) {
-        val d = decode(ctx, pcm, sr) ?: return
+    fun annotate(ctx: Context, wav: File, pcm: FloatArray, sr: Int): Decoded? {
+        val d = decode(ctx, pcm, sr) ?: return null
         val out = File(wav.parentFile, wav.nameWithoutExtension + ".phon")
         val o = JSONObject()
             .put("letter", d.letter).put("label", d.label).put("word", JSONArray(d.word))
         d.emb?.let { e -> o.put("emb", JSONArray().apply { for (v in e) put(v.toDouble()) }) }
         runCatching { out.writeText(o.toString()) }
+        return d
     }
 
     /** Read a previously-written `<base>.phon` for display, or null. */

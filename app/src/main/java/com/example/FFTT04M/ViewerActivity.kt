@@ -478,6 +478,13 @@ class ViewerActivity : AppCompatActivity() {
         setPadding(0, (10 * resources.displayMetrics.density).toInt(), 0, 0)
     }
 
+    /** Canonical training labels offered as quick-pick radios in the comment dialog (match the
+     *  desktop codebook's cleanLabel vocabulary; "bronchitis" is date-split into typical/dry-hacking
+     *  on the desktop, so both are offered directly here). */
+    private val QUICK_LABELS = listOf(
+        "dry hacking", "typical bronchitis", "dry", "croup",
+        "snoring", "sneeze", "voice", "noise")
+
     /**
      * Edit the recording's comment (a `<name>.txt` sidecar shown in the Gallery). Saving also
      * refreshes the gallery thumbnail with the FFT map exactly as currently displayed.
@@ -495,11 +502,42 @@ class ViewerActivity : AppCompatActivity() {
             setSingleLine(false)
             maxLines = 4
         }
-        val pad = (16 * resources.displayMetrics.density).toInt()
-        val container = FrameLayout(this).apply { setPadding(pad, pad / 2, pad, 0); addView(input) }
+        val density = resources.displayMetrics.density
+        val pad = (16 * density).toInt()
+
+        // Quick-label radio list: one tap fills the field with a canonical training class; the text
+        // field stays editable for custom notes. Matches the desktop codebook's label vocabulary.
+        val existingLc = existing.trim().removePrefix("manual:").trim().lowercase()
+        val radioGroup = android.widget.RadioGroup(this).apply {
+            orientation = android.widget.RadioGroup.VERTICAL
+            QUICK_LABELS.forEachIndexed { i, lbl ->
+                addView(android.widget.RadioButton(this@ViewerActivity).apply {
+                    text = lbl; id = 0x5A00 + i
+                    setTextColor(0xFF222222.toInt())   // dark text — the AlertDialog renders on white
+                    if (existingLc == lbl) isChecked = true
+                })
+            }
+            setOnCheckedChangeListener { _, checkedId ->
+                val idx = checkedId - 0x5A00
+                if (idx in QUICK_LABELS.indices) { input.setText(QUICK_LABELS[idx]); input.setSelection(input.text.length) }
+            }
+        }
+        fun caption(s: String) = android.widget.TextView(this).apply {
+            text = s; setTextColor(0xFF666666.toInt()); textSize = 12f
+            setPadding(0, (8 * density).toInt(), 0, (2 * density).toInt())
+        }
+        val column = android.widget.LinearLayout(this).apply {
+            orientation = android.widget.LinearLayout.VERTICAL
+            setPadding(pad, pad / 2, pad, 0)
+            addView(caption("Quick label:"))
+            addView(radioGroup)
+            addView(caption("…or type a custom note:"))
+            addView(input)
+        }
+        val container = android.widget.ScrollView(this).apply { addView(column) }
 
         androidx.appcompat.app.AlertDialog.Builder(this)
-            .setTitle("Comment")
+            .setTitle("Comment / label")
             .setView(container)
             .setPositiveButton("Save") { _, _ ->
                 val text = input.text.toString().trim()

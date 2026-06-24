@@ -154,7 +154,15 @@ class CoughCaptureService : Service() {
         // Background captures write no live icon, so generate the FFT spectrogram thumbnail here, plus
         // the on-the-fly phoneme decode (.phon) — both off-thread (no-op if already present).
         thread {
-            runCatching { com.example.FFTT04M.cough.PhonemeDecoder.annotate(this, wav, c.pcm, sampleRate) }
+            val decoded = runCatching {
+                com.example.FFTT04M.cough.PhonemeDecoder.annotate(this, wav, c.pcm, sampleRate)
+            }.getOrNull()
+            // Tier 1+: autonomously reject a high-confidence non-cough capture (detector misfire) into the
+            // recoverable rejected/ subfolder — no thumbnail needed, and refresh the gallery.
+            if (decoded != null && com.example.FFTT04M.cough.AutoReject.reject(this, wav, decoded)) {
+                runCatching { sendBroadcast(Intent(TransferService.ACTION_PROGRESS).setPackage(packageName)) }
+                return@thread
+            }
             val png = File(dir, "cough_$ts.png")
             if (!png.exists()) runCatching {
                 SpectrogramThumb.render(this, c.pcm, sampleRate)?.let { bmp ->
