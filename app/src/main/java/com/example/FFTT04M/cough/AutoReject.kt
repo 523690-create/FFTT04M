@@ -24,9 +24,16 @@ object AutoReject {
     const val SUBDIR = "rejected"
     private val NON_COUGH = setOf("noise", "voice")
     private const val MIN_CONFIDENCE = 0.8
+    private const val COUGH_PROB_FLOOR = 0.25f   // reject when the trained head is this confident it's NOT a cough
 
-    fun eligible(ctx: Context, d: PhonemeDecoder.Decoded): Boolean =
-        DeviceCaps.tier(ctx) >= 1 && d.label in NON_COUGH && d.confidence >= MIN_CONFIDENCE
+    fun eligible(ctx: Context, d: PhonemeDecoder.Decoded): Boolean {
+        if (DeviceCaps.tier(ctx) < 1) return false
+        // Preferred: the purpose-built cough head on the whole-clip HuBERT embedding (~F1 0.81) — a direct
+        // P(cough) rather than inferring "background" from the multi-class dominant letter.
+        d.emb?.let { CoughVerifier.coughProbability(ctx, it) }?.let { pCough -> return pCough < COUGH_PROB_FLOOR }
+        // Fallback (DSP path / head absent): the multi-class dominant-letter rule.
+        return d.label in NON_COUGH && d.confidence >= MIN_CONFIDENCE
+    }
 
     /** Move [wav] + its sidecars to `<recordingsDir>/rejected/`. Returns true if the clip was rejected. */
     fun reject(ctx: Context, wav: File, decoded: PhonemeDecoder.Decoded): Boolean {
