@@ -236,10 +236,12 @@ class GalleryActivity : AppCompatActivity() {
             startActivity(android.content.Intent(this, ManualActivity::class.java))
         }
         findViewById<Button>(R.id.btnShare).setOnClickListener { showShareDialog() }
-        findViewById<Button>(R.id.btnCloud).setOnClickListener {
+        // Null-safe: these live in both layout/ and layout-land/, but guard so a future layout variant
+        // that omits one can never crash the gallery on open (the Listen→Gallery landscape crash).
+        findViewById<Button?>(R.id.btnCloud)?.setOnClickListener {
             startActivity(Intent(this, com.example.FFTT04M.cough.ClipCloudActivity::class.java))
         }
-        findViewById<Button>(R.id.btnGalleryMenu).setOnClickListener { showGalleryMenu() }
+        findViewById<Button?>(R.id.btnGalleryMenu)?.setOnClickListener { showGalleryMenu() }
     }
 
     // ---- Gallery tools menu: batch auto-reject + recover rejected clips --------------------------

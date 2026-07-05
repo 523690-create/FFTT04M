@@ -28,11 +28,13 @@ object AutoReject {
 
     fun eligible(ctx: Context, d: PhonemeDecoder.Decoded): Boolean {
         if (DeviceCaps.tier(ctx) < 1) return false
-        // Preferred: the purpose-built cough head on the whole-clip HuBERT embedding (~F1 0.81) — a direct
-        // P(cough) rather than inferring "background" from the multi-class dominant letter.
-        d.emb?.let { CoughVerifier.coughProbability(ctx, it) }?.let { pCough -> return pCough < COUGH_PROB_FLOOR }
-        // Fallback (DSP path / head absent): the multi-class dominant-letter rule.
-        return d.label in NON_COUGH && d.confidence >= MIN_CONFIDENCE
+        // The multi-class decoder is the RELIABLE signal: it's trained on the user's own labelled clips,
+        // so it correctly IDs their voice/noise. The bundled binary head was trained on ALLDATA
+        // (coswara/urban8k) voice, which is OUT-OF-DISTRIBUTION from the user's voice — it confidently
+        // MISlabels it as cough. So the head may only ADD a rejection, never VETO the multi-class one.
+        val letterSaysBackground = d.label in NON_COUGH && d.confidence >= MIN_CONFIDENCE
+        val headSaysNotCough = d.emb?.let { CoughVerifier.coughProbability(ctx, it) }?.let { it < COUGH_PROB_FLOOR } ?: false
+        return letterSaysBackground || headSaysNotCough
     }
 
     /** Move [wav] + its sidecars to `<recordingsDir>/rejected/`. Returns true if the clip was rejected. */
