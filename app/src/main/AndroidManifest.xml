@@ -5,6 +5,8 @@
     <uses-permission android:name="android.permission.MODIFY_AUDIO_SETTINGS" />
     <!-- Device-to-device gallery transfer: local-socket payload + QR scan handshake. -->
     <uses-permission android:name="android.permission.INTERNET" />
+    <!-- Wi-Fi-only download of the public HuBERT model (DownloadManager); network-state to gate on Wi-Fi. -->
+    <uses-permission android:name="android.permission.ACCESS_NETWORK_STATE" />
     <uses-permission android:name="android.permission.CAMERA" />
     <uses-feature android:name="android.hardware.camera" android:required="false" />
     <!-- Bluetooth transfer & pairing (bonded devices + discovery for in-app pairing). -->
@@ -156,6 +158,15 @@
                 android:name="android.support.FILE_PROVIDER_PATHS"
                 android:resource="@xml/file_paths" />
         </provider>
+
+        <!-- DownloadManager completion for the Wi-Fi HuBERT model download (verify + install). -->
+        <receiver
+            android:name=".cough.HubertDownloadReceiver"
+            android:exported="true">
+            <intent-filter>
+                <action android:name="android.intent.action.DOWNLOAD_COMPLETE" />
+            </intent-filter>
+        </receiver>
 
     </application>
 

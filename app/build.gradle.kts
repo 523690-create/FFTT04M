@@ -30,7 +30,19 @@ android {
         versionName = "M2.${SimpleDateFormat("yyMMdd.HHmm", Locale.US).format(Date())}"
 
         testInstrumentationRunner = "androidx.test.runner.AndroidJUnitRunner"
+
+        // Public HuBERT model (Meta, exported to ONNX) is NO LONGER bundled — it downloads over Wi-Fi
+        // and HuBERT features stay disabled (DSP fallback) until it lands. Only OUR proprietary codebooks
+        // ship in the APK. Set the host with -PhubertUrl=... (a GitHub Release asset ≤2 GB works).
+        // The app verifies the download against the exact size + sha256 before ORT loads it.
+        val hubertUrl = (project.findProperty("hubertUrl") as String?)
+            ?: "https://github.com/523690-create/FFTT04M/releases/download/hubert-base-v1/hubert_base.onnx"
+        buildConfigField("String", "HUBERT_MODEL_URL", "\"$hubertUrl\"")
+        buildConfigField("String", "HUBERT_MODEL_SHA256", "\"e975dac7930a807e8989b147eab95496df6ff47614aa87afd4d86da77bb28179\"")
+        buildConfigField("long", "HUBERT_MODEL_BYTES", "377727100L")
     }
+
+    buildFeatures { buildConfig = true }
 
     buildTypes {
         release {

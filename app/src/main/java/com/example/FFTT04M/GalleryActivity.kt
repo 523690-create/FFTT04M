@@ -239,6 +239,10 @@ class GalleryActivity : AppCompatActivity() {
         // Null-safe: these live in both layout/ and layout-land/, but guard so a future layout variant
         // that omits one can never crash the gallery on open (the Listen→Gallery landscape crash).
         findViewById<Button?>(R.id.btnCloud)?.setOnClickListener {
+            // Nudge to enable the gold-standard tier if the device is capable but the model isn't downloaded
+            // yet (non-blocking — the cloud still opens on the DSP tier meanwhile).
+            if (DeviceCaps.hubertAllowed(this) && !com.example.FFTT04M.cough.HubertModelManager.isPresent(this))
+                com.example.FFTT04M.cough.HubertModelManager.promptDownload(this)
             startActivity(Intent(this, com.example.FFTT04M.cough.ClipCloudActivity::class.java))
         }
         findViewById<Button?>(R.id.btnGalleryMenu)?.setOnClickListener { showGalleryMenu() }
@@ -248,13 +252,19 @@ class GalleryActivity : AppCompatActivity() {
     private fun showGalleryMenu() {
         val dir = GalleryTransfer.recordingsDir(this) ?: filesDir
         val rejectedN = com.example.FFTT04M.cough.AutoReject.rejectedWavs(dir).size
-        val items = arrayOf("Auto-reject non-cough clips", "Rejected clips ($rejectedN)")
+        val modelLabel = when (com.example.FFTT04M.cough.HubertModelManager.state(this)) {
+            is com.example.FFTT04M.cough.HubertModelManager.State.Present -> "Gold-standard model ✓ installed"
+            is com.example.FFTT04M.cough.HubertModelManager.State.Downloading -> "Gold-standard model — downloading…"
+            else -> "Download gold-standard model (361 MB, Wi-Fi)"
+        }
+        val items = arrayOf("Auto-reject non-cough clips", "Rejected clips ($rejectedN)", modelLabel)
         AlertDialog.Builder(this)
             .setTitle("Gallery tools")
             .setItems(items) { _, which ->
                 when (which) {
                     0 -> confirmAndSweep(dir)
                     1 -> showRejectedDialog(dir)
+                    2 -> com.example.FFTT04M.cough.HubertModelManager.promptDownload(this)
                 }
             }.show()
     }

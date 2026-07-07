@@ -57,16 +57,12 @@ object HubertFeatures {
         }
     }
 
-    /** Copy the bundled asset to filesDir once — ORT needs a real file path to mmap the model. */
+    /** The Wi-Fi-DOWNLOADED model file (no longer bundled — see [HubertModelManager]). Present + full-size
+     *  ⇒ HuBERT usable; otherwise null ⇒ PhonemeDecoder stays on the DSP codebook until it's downloaded. */
     private fun stageModel(ctx: Context): File? {
-        val out = File(ctx.filesDir, ASSET)
-        return try {
-            if (!out.isFile || out.length() < 1_000_000) {
-                ctx.assets.open(ASSET).use { inp -> out.outputStream().use { inp.copyTo(it, 1 shl 20) } }
-                Log.i(TAG, "staged model → ${out.absolutePath} (${out.length() / 1_000_000}MB)")
-            }
-            out
-        } catch (t: Throwable) { Log.e(TAG, "no bundled model: ${t.message}"); null }
+        val f = HubertModelManager.modelFile(ctx)
+        return if (f.isFile && f.length() == com.example.FFTT04M.BuildConfig.HUBERT_MODEL_BYTES) f
+        else { Log.i(TAG, "HuBERT model not downloaded — DSP fallback"); null }
     }
 
     /** `[T, 768]` per-frame hidden states for a clip (resampled to 16 kHz), or null on any failure.
