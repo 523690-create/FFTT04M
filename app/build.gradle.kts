@@ -22,7 +22,9 @@ android {
 
     defaultConfig {
         applicationId = "com.example.FFTT04M"
-        minSdk = 32
+        // Lowered 32 → 23 to unify with the retired L (Legacy) variant: one APK installs on old devices
+        // too. Modern features gate at RUNTIME (DeviceCaps tiers + the Wi-Fi HuBERT download), not at install.
+        minSdk = 23
         targetSdk = 36
         // Versioning starts at major 2 with a build timestamp; "M" prefix marks this as the M variant.
         // versionCode = whole minutes since the Unix epoch (monotonic, fits Int until ~2065).
