@@ -49,6 +49,16 @@ data class RidgeFeatures(
     val bandwidthHz: Double,
     /** Goodness of the parabola fit (coefficient of determination, ≤ 1). */
     val rSquared: Double,
+    /** Ridge time span (t_last − t_first), in seconds — the located squiggle's duration. */
+    val ridgeDurationSec: Double = 0.0,
+    /** Fitted frequency at the ridge START (t_first), in Hz. */
+    val startFreqHz: Double = 0.0,
+    /** Turnaround (vertex) frequency — the "peak" of a rise-then-fall chirp, in Hz. */
+    val peakFreqHz: Double = 0.0,
+    /** Fitted frequency at the ridge END (t_last), in Hz. */
+    val endFreqHz: Double = 0.0,
+    /** Time of the parabola vertex (−b/2a) clamped to the ridge span, relative to the segment, in seconds. */
+    val vertexTimeSec: Double = 0.0,
 ) {
     companion object {
         val NONE = RidgeFeatures(false, 0.0, 0.0, 0.0, 0.0, 0, 0.0, 0.0, 0.0)

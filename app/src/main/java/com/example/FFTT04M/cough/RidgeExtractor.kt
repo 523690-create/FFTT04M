@@ -76,6 +76,15 @@ class RidgeExtractor(private val cfg: CoughAnalysisConfig = CoughAnalysisConfig(
         for (p in points) { val d = p.freqHz - meanF; varF += d * d }
         val bandwidth = sqrt(varF / points.size)
 
+        // The located squiggle, read off the fitted parabola f(t)=a·t²+b·t+c: its span (duration), the
+        // frequency at each end, and the vertex (turnaround) — the "peak" of a rise-then-fall (a<0) chirp.
+        val t0 = t.first(); val t1 = t.last()
+        fun fAt(tt: Double) = a * tt * tt + b * tt + c
+        val startF = fAt(t0); val endF = fAt(t1)
+        val vertexRaw = if (kotlin.math.abs(a) > 1e-9) -b / (2 * a) else if (startF >= endF) t0 else t1
+        val vertexT = vertexRaw.coerceIn(t0, t1)
+        val peakF = fAt(vertexT)
+
         return RidgeResult(
             RidgeFeatures(
                 valid = true,
@@ -85,6 +94,11 @@ class RidgeExtractor(private val cfg: CoughAnalysisConfig = CoughAnalysisConfig(
                 energy = meanE,
                 bandwidthHz = bandwidth,
                 rSquared = r2,
+                ridgeDurationSec = t1 - t0,
+                startFreqHz = startF,
+                peakFreqHz = peakF,
+                endFreqHz = endF,
+                vertexTimeSec = vertexT,
             ),
             points,
         )
