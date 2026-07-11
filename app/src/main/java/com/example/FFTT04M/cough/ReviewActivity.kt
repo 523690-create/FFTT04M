@@ -136,7 +136,7 @@ class ReviewActivity : AppCompatActivity() {
         root.addView(hintText)
 
         val playBtn = Button(this).apply {
-            text = "▶ Play"
+            text = "↻ Replay"
             setOnClickListener { playCurrent() }
         }
         root.addView(playBtn)
@@ -205,6 +205,8 @@ class ReviewActivity : AppCompatActivity() {
             bulkButton.visibility = View.VISIBLE
             bulkButton.text = "Confirm remaining ${queue.size - pos} as ${GroundTruthBucket.displayName(cat)}"
         } else bulkButton.visibility = View.GONE
+
+        playCurrent()   // autoplay — the reviewer shouldn't have to tap Replay just to hear the first pass
     }
 
     private fun playCurrent() {

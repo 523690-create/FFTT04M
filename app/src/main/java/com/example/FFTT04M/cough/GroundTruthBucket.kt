@@ -81,4 +81,11 @@ object GroundTruthBucket {
         Category.NOISE -> "Noise"; Category.SNORE -> "Snore"; Category.SNEEZE -> "Sneeze"
         Category.OTHER -> "Other"; Category.UNKNOWN -> "Unlabeled"
     }
+
+    /** One-line "Category: X (confirmed|predicted)" tag shared by every clip listing (regular Gallery
+     *  and the bucket list), so ground truth status is visible everywhere, not just inside Review. */
+    fun statusLine(b: Bucketed): String =
+        "Category: ${displayName(b.category)} (${if (b.confirmed) "confirmed" else "predicted"})"
+
+    fun statusLine(wav: File): String = statusLine(bucketOf(wav))
 }

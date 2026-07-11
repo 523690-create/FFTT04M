@@ -41,6 +41,8 @@ class GalleryActivity : AppCompatActivity() {
 
     private lateinit var recyclerView: RecyclerView
     private lateinit var btnViewToggle: ImageButton
+    private lateinit var toolsSpinner: android.widget.Spinner
+    private var toolsSpinnerIgnoreNext = false
     private var isGridView = false
     private var files = mutableListOf<File>()
 
@@ -192,6 +194,8 @@ class GalleryActivity : AppCompatActivity() {
 
         recyclerView = findViewById(R.id.recyclerView)
         btnViewToggle = findViewById(R.id.btnViewToggle)
+        toolsSpinner = findViewById(R.id.galleryToolsSpinner)
+        setupGalleryToolsSpinner()
 
         updateLayoutManager()
 
@@ -245,11 +249,35 @@ class GalleryActivity : AppCompatActivity() {
                 com.example.FFTT04M.cough.HubertModelManager.promptDownload(this)
             startActivity(Intent(this, com.example.FFTT04M.cough.ClipCloudActivity::class.java))
         }
-        findViewById<Button?>(R.id.btnGalleryMenu)?.setOnClickListener { showGalleryMenu() }
     }
 
-    // ---- Gallery tools menu: batch auto-reject + recover rejected clips --------------------------
-    private fun showGalleryMenu() {
+    // ---- Gallery tools spinner (pink, between GALLERY and the grid/list toggle): batch auto-reject,
+    // recover rejected clips, model download, ground truth review. A one-shot action menu, not a
+    // persistent mode — position 0 is an inert "Tools ▾" placeholder the spinner snaps back to right
+    // after any real selection runs its action.
+    private fun setupGalleryToolsSpinner() {
+        refreshGalleryToolsSpinner()
+        toolsSpinner.onItemSelectedListener = object : android.widget.AdapterView.OnItemSelectedListener {
+            override fun onItemSelected(parent: android.widget.AdapterView<*>?, view: View?, position: Int, id: Long) {
+                if (toolsSpinnerIgnoreNext) { toolsSpinnerIgnoreNext = false; return }
+                if (position == 0) return
+                val dir = GalleryTransfer.recordingsDir(this@GalleryActivity) ?: filesDir
+                when (position) {
+                    1 -> confirmAndSweep(dir)
+                    2 -> showRejectedDialog(dir)
+                    3 -> com.example.FFTT04M.cough.HubertModelManager.promptDownload(this@GalleryActivity)
+                    4 -> startActivity(Intent(this@GalleryActivity, com.example.FFTT04M.cough.GroundTruthActivity::class.java))
+                }
+                toolsSpinnerIgnoreNext = true
+                toolsSpinner.setSelection(0, false)
+            }
+            override fun onNothingSelected(parent: android.widget.AdapterView<*>?) {}
+        }
+    }
+
+    /** Rebuild the spinner's labels (rejected count + model state can change between opens) — called
+     *  whenever the gallery reloads, same cadence the old dialog's numbers used to refresh at. */
+    private fun refreshGalleryToolsSpinner() {
         val dir = GalleryTransfer.recordingsDir(this) ?: filesDir
         val rejectedN = com.example.FFTT04M.cough.AutoReject.rejectedWavs(dir).size
         val modelLabel = when (com.example.FFTT04M.cough.HubertModelManager.state(this)) {
@@ -257,17 +285,11 @@ class GalleryActivity : AppCompatActivity() {
             is com.example.FFTT04M.cough.HubertModelManager.State.Downloading -> "Gold-standard model — downloading…"
             else -> "Download gold-standard model (361 MB, Wi-Fi)"
         }
-        val items = arrayOf("Auto-reject non-cough clips", "Rejected clips ($rejectedN)", modelLabel, "Ground truth review")
-        AlertDialog.Builder(this)
-            .setTitle("Gallery tools")
-            .setItems(items) { _, which ->
-                when (which) {
-                    0 -> confirmAndSweep(dir)
-                    1 -> showRejectedDialog(dir)
-                    2 -> com.example.FFTT04M.cough.HubertModelManager.promptDownload(this)
-                    3 -> startActivity(Intent(this, com.example.FFTT04M.cough.GroundTruthActivity::class.java))
-                }
-            }.show()
+        val items = listOf("Tools ▾", "Auto-reject non-cough clips", "Rejected clips ($rejectedN)", modelLabel, "Ground truth review")
+        val adapter = android.widget.ArrayAdapter(this, R.layout.spinner_item_gallery_pink, items)
+        adapter.setDropDownViewResource(android.R.layout.simple_spinner_dropdown_item)
+        toolsSpinnerIgnoreNext = true   // a fresh adapter re-fires onItemSelected(0) — ignore that echo
+        toolsSpinner.adapter = adapter
     }
 
     private fun confirmAndSweep(dir: File) {
@@ -628,6 +650,7 @@ class GalleryActivity : AppCompatActivity() {
     }
 
     private fun loadFiles() {
+        if (::toolsSpinner.isInitialized) refreshGalleryToolsSpinner()
         val filesDir = GalleryTransfer.recordingsDir(this)
         // Match audio recordings: WAV is the current format; FLAC is kept for backward compat
         // with files saved by older builds.
@@ -746,26 +769,23 @@ class GalleryActivity : AppCompatActivity() {
 
             holder.textView.text = file.name
 
-            // Comment cell = the user's manual comment (the .txt, but NOT the old auto-generated
-            // "auto-match (top-3)" dumps) + the on-device phoneme decode (≈ class: word, from .phon).
+            // Comment cell = the ground-truth category tag (always shown) + the user's manual comment
+            // (the .txt, but NOT the old auto-generated "auto-match (top-3)" dumps) + the on-device
+            // phoneme decode (≈ class: word, from .phon).
             val base = file.nameWithoutExtension
             val commentFile = File(file.parent, "$base.txt")
             val manual = if (commentFile.exists())
                 (commentFile.readText().trim().takeUnless { it.startsWith("auto-match") } ?: "") else ""
             val decoded = file.parentFile?.let { PhonemeDecoder.read(it, base) }
-            val sb = StringBuilder()
-            if (manual.isNotEmpty()) sb.append(manual)
+            val sb = StringBuilder(com.example.FFTT04M.cough.GroundTruthBucket.statusLine(file))
+            if (manual.isNotEmpty()) sb.append('\n').append(manual)
             if (decoded != null && decoded.letter != "?") {
-                if (sb.isNotEmpty()) sb.append('\n')
+                sb.append('\n')
                 sb.append("≈ ").append(decoded.label).append(" (").append(decoded.letter).append("): ")
                     .append(decoded.word.joinToString(" "))
             }
-            if (sb.isEmpty()) {
-                holder.commentView.visibility = View.GONE
-            } else {
-                holder.commentView.visibility = View.VISIBLE
-                holder.commentView.text = sb.toString()
-            }
+            holder.commentView.visibility = View.VISIBLE
+            holder.commentView.text = sb.toString()
 
             val iconFile = File(file.parent, file.nameWithoutExtension + ".png")
             if (iconFile.exists()) {

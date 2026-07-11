@@ -184,8 +184,8 @@ class GroundTruthActivity : AppCompatActivity() {
                 holder.icon.setImageBitmap(BitmapFactory.decodeFile(png.absolutePath, opts))
             } else holder.icon.setImageResource(android.R.drawable.ic_menu_report_image)
             val bucket = GroundTruthBucket.bucketOf(f)
-            val status = if (bucket.confirmed) "confirmed: ${bucket.sourceText}" else "predicted: ${bucket.sourceText.ifBlank { "?" }}"
-            holder.text.text = "${dateFmt.format(Date(f.lastModified()))}\n$status"
+            val raw = if (bucket.confirmed) "confirmed: ${bucket.sourceText}" else "predicted: ${bucket.sourceText.ifBlank { "?" }}"
+            holder.text.text = "${dateFmt.format(Date(f.lastModified()))}\n${GroundTruthBucket.statusLine(bucket)}\n$raw"
             holder.root.setOnClickListener {
                 startActivity(Intent(this@GroundTruthActivity, ViewerActivity::class.java).apply {
                     putExtra("FILE_PATH", f.absolutePath)
