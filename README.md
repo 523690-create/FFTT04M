@@ -61,7 +61,8 @@ A grid/list of saved recordings, each with a thumbnail and filename.
 - The **⋮** menu (top-right) has **Gallery tools**: *Auto-reject non-cough clips* sweeps the whole
   gallery and moves high-confidence noise/voice captures into the recoverable `rejected/` folder (see
   *On-device classification → Auto-reject*); *Rejected clips (N)* lets you **restore all** or delete
-  them.
+  them; *Ground truth review* buckets every clip by cough/breath/voice/noise/snore/sneeze so you can
+  quickly confirm or correct labels — see *Ground truth review* below.
 
 ### FFT analysis (Viewer)
 Detailed FFT spectrogram of a saved recording, with three tabs:
@@ -75,8 +76,21 @@ Top bar: **GALLERY**, **LISTEN**, **WAVELET** (analysis of the same file), **NOT
 (comment / label the clip — see below — and refresh the thumbnail), **PLAY** (raw audio playback).
 
 The **NOTE** dialog offers **quick-label radio buttons** for the common classes (dry hacking, typical
-bronchitis, dry, croup, snoring, sneeze, voice, noise) — one tap fills the field — plus a free-text box
-for anything custom. The label you save trains the codebook (see *On-device classification*).
+bronchitis, dry, croup, snoring, sneeze, voice, noise, breathing) — one tap fills the field — plus a
+free-text box for anything custom. The label you save trains the codebook (see *On-device
+classification*).
+
+### Ground truth review
+
+The on-device detector inevitably captures far more breath/noise/voice clips than real coughs, and the
+codebook doesn't yet recognize breathing as its own class — so those clips need your correction to become
+useful training data. **Gallery → ⋮ → Ground truth review** buckets every clip by cough / breath / voice /
+noise / snore / sneeze, showing how many in each bucket are already confirmed (you've labelled them) vs.
+unconfirmed (only the on-device guess). Tap **View** to browse a bucket's clips (opens the Viewer on tap),
+or **Review** to jump into a fast one-clip-at-a-time confirmation flow: play the clip, tap the correct
+label (auto-advances to the next), or **Skip**. For a long uniform stretch (e.g. one long breathing
+session), **Confirm remaining as …** labels the rest of that bucket in one action — only use it once
+you've spot-checked that the batch really is uniform.
 
 - **PROCESSED PLAYBACK** plays the recording **as you see it** — EQ, FILTER, and the ENHANCE
   post-processors are all applied to the sound (reconstructed from the displayed spectrogram with
