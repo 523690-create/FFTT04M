@@ -257,7 +257,7 @@ class GalleryActivity : AppCompatActivity() {
             is com.example.FFTT04M.cough.HubertModelManager.State.Downloading -> "Gold-standard model — downloading…"
             else -> "Download gold-standard model (361 MB, Wi-Fi)"
         }
-        val items = arrayOf("Auto-reject non-cough clips", "Rejected clips ($rejectedN)", modelLabel)
+        val items = arrayOf("Auto-reject non-cough clips", "Rejected clips ($rejectedN)", modelLabel, "Ground truth review")
         AlertDialog.Builder(this)
             .setTitle("Gallery tools")
             .setItems(items) { _, which ->
@@ -265,6 +265,7 @@ class GalleryActivity : AppCompatActivity() {
                     0 -> confirmAndSweep(dir)
                     1 -> showRejectedDialog(dir)
                     2 -> com.example.FFTT04M.cough.HubertModelManager.promptDownload(this)
+                    3 -> startActivity(Intent(this, com.example.FFTT04M.cough.GroundTruthActivity::class.java))
                 }
             }.show()
     }

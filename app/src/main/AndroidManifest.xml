@@ -108,6 +108,18 @@
             android:screenOrientation="fullSensor" />
 
         <activity
+            android:name=".cough.GroundTruthActivity"
+            android:exported="false"
+            android:label="Ground Truth Review"
+            android:screenOrientation="fullSensor" />
+
+        <activity
+            android:name=".cough.ReviewActivity"
+            android:exported="false"
+            android:label="Review"
+            android:screenOrientation="fullSensor" />
+
+        <activity
             android:name=".LatencyActivity"
             android:exported="false"
             android:screenOrientation="fullSensor" />

@@ -483,7 +483,7 @@ class ViewerActivity : AppCompatActivity() {
      *  on the desktop, so both are offered directly here). */
     private val QUICK_LABELS = listOf(
         "dry hacking", "typical bronchitis", "dry", "croup",
-        "snoring", "sneeze", "voice", "noise")
+        "snoring", "sneeze", "voice", "noise", "breathing")
 
     /**
      * Edit the recording's comment (a `<name>.txt` sidecar shown in the Gallery). Saving also
