@@ -2,7 +2,24 @@
 
 Read this file first, then continue the work. This captures context that is NOT in the
 codebase or the other .md files — it lives only in the chat session that produced it.
-Date: 2026-06-12 (latest session below; older 2026-06-05 notes follow).
+Date: 2026-06-12 (latest session below; older 2026-06-05 notes follow; jump to 2026-07-11 for the newest).
+
+## SESSION 2026-07-11 — Ground Truth Review device-tested on Pixel 10 (session was interrupted before
+## updating this file; reconstructed + verified-no-regression in a follow-up review session same day)
+Full detail in memory `mobile-capture-transfer`. A separate session (not visible in this chat's history —
+found via `git log`/GitHub, not this file) took the Ground Truth Review tooling built 2026-07-10
+(`fb6285e`/`5b05870`) onto an actual Pixel 10 and found+fixed real bugs, pushing 4 commits to blue_sky:
+`c6cd29b` (autoplay + category tags + pink tools spinner replacing the old ⋮ menu), `92822ff` (rejected-
+clips viewer: `AutoReject.diagnose()`/`restoreOne()`, auto-restore-on-confirm when a rejected clip turns
+out not to be noise/voice), `6e198a1` (spinner min-height fix), `7e1494d` (rotation-state + stale-count
+fix in `GroundTruthActivity` — persist `source`/`currentCategory` via onSaveInstanceState, redraw from
+onResume as the single source of truth). **Follow-up review confirmed: no regressions** — HEAD
+(`7e1494d`) builds green (`assembleDebug`, jar 'H', build 137), all 4 diffs read correct, git reflog/stash
+show nothing lost. The Ground Truth Review tooling is now real and device-verified, not just
+compile-verified. **Next: actually use it to collect more labelled device data** (the highest-leverage
+lever per `cough-detection-architecture` round 5's conclusion that the algorithmic toolkit is exhausted at
+33.3% in-domain breath-FP) — that's a manual phone-in-hand process, not something further desktop/
+autonomous work can drive.
 
 ## SESSION 2026-06-13 — always-on background capture + capture-quality decisions (M)
 Workspace moved to **D:\AndroidProjects** (fresh clones from GitHub; datasets alongside). Five user
