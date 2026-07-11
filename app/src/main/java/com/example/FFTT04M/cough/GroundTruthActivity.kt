@@ -45,7 +45,11 @@ import kotlin.concurrent.thread
  */
 class GroundTruthActivity : AppCompatActivity() {
 
-    companion object { const val EX_SOURCE = "SOURCE" }
+    companion object {
+        const val EX_SOURCE = "SOURCE"
+        private const val KEY_SOURCE = "state_source"
+        private const val KEY_CATEGORY = "state_category"
+    }
 
     private enum class Source { MAIN, REJECTED }
     private data class Row(val cat: GroundTruthBucket.Category, val total: Int, val confirmed: Int)
@@ -53,14 +57,40 @@ class GroundTruthActivity : AppCompatActivity() {
     private lateinit var container: FrameLayout
     private val dateFmt = SimpleDateFormat("MMM d, HH:mm:ss", Locale.US)
     private var source = Source.MAIN
+    // null = the summary screen is showing; non-null = showList(that category) is showing. Persisted
+    // across BOTH process recreation (rotation — screenOrientation="fullSensor" recreates the activity,
+    // and re-reading the ORIGINAL launch intent on every onCreate silently reverted an in-session
+    // Main<->Rejected toggle back to whatever the activity was FIRST launched with) and simple
+    // resume (so returning from Review/Viewer always shows fresh confirmed/unconfirmed counts instead
+    // of the stale snapshot from before that trip — previously only happened to look "refreshed" when a
+    // rotation also happened to occur, which recreates the activity and reruns the scan as a side effect).
+    private var currentCategory: GroundTruthBucket.Category? = null
 
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
         title = "Ground Truth Review"
-        source = runCatching { Source.valueOf(intent.getStringExtra(EX_SOURCE) ?: "MAIN") }.getOrDefault(Source.MAIN)
+        source = when (val saved = savedInstanceState?.getString(KEY_SOURCE)) {
+            null -> runCatching { Source.valueOf(intent.getStringExtra(EX_SOURCE) ?: "MAIN") }.getOrDefault(Source.MAIN)
+            else -> runCatching { Source.valueOf(saved) }.getOrDefault(Source.MAIN)
+        }
+        currentCategory = savedInstanceState?.getString(KEY_CATEGORY)
+            ?.let { runCatching { GroundTruthBucket.Category.valueOf(it) }.getOrNull() }
         container = FrameLayout(this).apply { setBackgroundColor(0xFF111111.toInt()) }
         setContentView(container)
-        showSummary()
+        // showSummary()/showList() run from onResume() (which always fires right after onCreate too),
+        // so there is a single place that (re)draws the current screen with fresh data.
+    }
+
+    override fun onSaveInstanceState(outState: Bundle) {
+        super.onSaveInstanceState(outState)
+        outState.putString(KEY_SOURCE, source.name)
+        currentCategory?.let { outState.putString(KEY_CATEGORY, it.name) }
+    }
+
+    override fun onResume() {
+        super.onResume()
+        val cat = currentCategory
+        if (cat != null) showList(cat) else showSummary()
     }
 
     private fun mainDir(): File = GalleryTransfer.recordingsDir(this) ?: filesDir
@@ -69,6 +99,7 @@ class GroundTruthActivity : AppCompatActivity() {
     // ---- summary screen: Main/Rejected toggle + counts per bucket --------------------------------
 
     private fun showSummary() {
+        currentCategory = null
         val density = resources.displayMetrics.density
         val pad = (16 * density).toInt()
         val root = LinearLayout(this).apply {
@@ -154,12 +185,12 @@ class GroundTruthActivity : AppCompatActivity() {
             }
             runOnUiThread {
                 status.visibility = View.GONE
-                for (r in rows) root.addView(buildSummaryRow(r, wavs))
+                for (r in rows) root.addView(buildSummaryRow(r))
             }
         }
     }
 
-    private fun buildSummaryRow(r: Row, allWavs: List<File>): View {
+    private fun buildSummaryRow(r: Row): View {
         val row = LinearLayout(this).apply {
             orientation = LinearLayout.HORIZONTAL
             setPadding(0, (10 * resources.displayMetrics.density).toInt(), 0, (10 * resources.displayMetrics.density).toInt())
@@ -175,7 +206,7 @@ class GroundTruthActivity : AppCompatActivity() {
         row.addView(Button(this).apply {
             text = "View"
             isEnabled = r.total > 0
-            setOnClickListener { showList(r.cat, allWavs) }
+            setOnClickListener { showList(r.cat) }
         })
         row.addView(Button(this).apply {
             text = "Review"
@@ -193,7 +224,11 @@ class GroundTruthActivity : AppCompatActivity() {
 
     // ---- list screen: every clip in one bucket, tap to open in the Viewer -----------------------
 
-    private fun showList(cat: GroundTruthBucket.Category, allWavs: List<File>) {
+    /** Always rescans [sourceDir] itself (rather than trusting a caller-supplied snapshot) so a repeat
+     *  call from [onResume] shows fresh confirmed/unconfirmed status without depending on a rotation
+     *  having happened to occur in between. */
+    private fun showList(cat: GroundTruthBucket.Category) {
+        currentCategory = cat
         val density = resources.displayMetrics.density
         val pad = (16 * density).toInt()
         val root = LinearLayout(this).apply { orientation = LinearLayout.VERTICAL }
@@ -217,7 +252,10 @@ class GroundTruthActivity : AppCompatActivity() {
 
         val rejectedMode = source == Source.REJECTED
         thread {
-            val items = allWavs.filter { GroundTruthBucket.bucketOf(it).category == cat }
+            val dir = sourceDir()
+            val wavs = dir.listFiles { f -> f.isFile && (f.extension.equals("wav", true) || f.extension.equals("flac", true)) }
+                ?.toList() ?: emptyList()
+            val items = wavs.filter { GroundTruthBucket.bucketOf(it).category == cat }
                 .sortedByDescending { it.lastModified() }
             // Diagnose (decoder label/confidence + head P(cough)) only makes sense for rejected clips —
             // it's cheap when a .phon is already cached, but may decode fresh for older sweep-rejected
