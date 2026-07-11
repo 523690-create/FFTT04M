@@ -264,7 +264,8 @@ class GalleryActivity : AppCompatActivity() {
                 val dir = GalleryTransfer.recordingsDir(this@GalleryActivity) ?: filesDir
                 when (position) {
                     1 -> confirmAndSweep(dir)
-                    2 -> showRejectedDialog(dir)
+                    2 -> startActivity(Intent(this@GalleryActivity, com.example.FFTT04M.cough.GroundTruthActivity::class.java)
+                        .putExtra(com.example.FFTT04M.cough.GroundTruthActivity.EX_SOURCE, "REJECTED"))
                     3 -> com.example.FFTT04M.cough.HubertModelManager.promptDownload(this@GalleryActivity)
                     4 -> startActivity(Intent(this@GalleryActivity, com.example.FFTT04M.cough.GroundTruthActivity::class.java))
                 }
@@ -327,29 +328,6 @@ class GalleryActivity : AppCompatActivity() {
                 }
             }
         }
-    }
-
-    private fun showRejectedDialog(dir: File) {
-        val n = com.example.FFTT04M.cough.AutoReject.rejectedWavs(dir).size
-        if (n == 0) { Toast.makeText(this, "No rejected clips", Toast.LENGTH_SHORT).show(); return }
-        AlertDialog.Builder(this)
-            .setTitle("Rejected clips")
-            .setMessage("$n auto-rejected clip(s) held in:\n${com.example.FFTT04M.cough.AutoReject.rejectedDir(dir).absolutePath}\n\n" +
-                "Restore them all to the gallery, or delete them permanently?")
-            .setPositiveButton("Restore all") { _, _ ->
-                thread {
-                    val r = com.example.FFTT04M.cough.AutoReject.restoreAll(dir)
-                    runOnUiThread { if (!isFinishing) { Toast.makeText(this, "Restored $r clip(s)", Toast.LENGTH_LONG).show(); loadFiles() } }
-                }
-            }
-            .setNeutralButton("Delete all") { _, _ ->
-                thread {
-                    val r = com.example.FFTT04M.cough.AutoReject.deleteAll(dir)
-                    runOnUiThread { if (!isFinishing) Toast.makeText(this, "Deleted $r rejected clip(s)", Toast.LENGTH_LONG).show() }
-                }
-            }
-            .setNegativeButton("Close", null)
-            .show()
     }
 
     /** SHARE → Bluetooth (paired, no network), Wi-Fi QR (same LAN), or file (any network). */

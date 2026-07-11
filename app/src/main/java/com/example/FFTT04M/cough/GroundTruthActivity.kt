@@ -2,10 +2,8 @@ package com.example.FFTT04M.cough
 
 import android.content.Intent
 import android.graphics.BitmapFactory
-import android.graphics.Color
 import android.os.Bundle
 import android.view.Gravity
-import android.view.LayoutInflater
 import android.view.View
 import android.view.ViewGroup
 import android.widget.Button
@@ -14,6 +12,8 @@ import android.widget.ImageView
 import android.widget.LinearLayout
 import android.widget.ScrollView
 import android.widget.TextView
+import android.widget.Toast
+import androidx.appcompat.app.AlertDialog
 import androidx.appcompat.app.AppCompatActivity
 import androidx.recyclerview.widget.LinearLayoutManager
 import androidx.recyclerview.widget.RecyclerView
@@ -33,24 +33,40 @@ import kotlin.concurrent.thread
  * the on-device codebook has no breathing class yet) — can be browsed or bulk-reviewed per bucket instead
  * of buried in one long undifferentiated gallery list.
  *
- * Entry point: Gallery → "Gallery tools" menu → "Ground truth review".
+ * Also covers the `rejected/` folder (a "Main Gallery" / "Rejected Clips" toggle up top): a confirmed
+ * cough can end up auto-rejected if the review that would have protected it (writes a `.txt`, which
+ * [com.example.FFTT04M.cough.AutoReject] always honors) happened AFTER the clip was already swept, or if
+ * review was left partial and the decoder simply misjudged an un-reviewed clip. The rejected view shows
+ * each clip's auto-interpretation ([AutoReject.diagnose] — the decoder label/confidence and, when
+ * available, the trained head's P(cough), i.e. exactly the two signals that trigger a reject) alongside
+ * its ground-truth status, with a per-clip Restore action plus bulk Restore All / Delete All.
+ *
+ * Entry point: Gallery → pink "Tools" spinner → "Ground truth review" / "Rejected clips (N)".
  */
 class GroundTruthActivity : AppCompatActivity() {
 
+    companion object { const val EX_SOURCE = "SOURCE" }
+
+    private enum class Source { MAIN, REJECTED }
     private data class Row(val cat: GroundTruthBucket.Category, val total: Int, val confirmed: Int)
 
     private lateinit var container: FrameLayout
     private val dateFmt = SimpleDateFormat("MMM d, HH:mm:ss", Locale.US)
+    private var source = Source.MAIN
 
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
         title = "Ground Truth Review"
+        source = runCatching { Source.valueOf(intent.getStringExtra(EX_SOURCE) ?: "MAIN") }.getOrDefault(Source.MAIN)
         container = FrameLayout(this).apply { setBackgroundColor(0xFF111111.toInt()) }
         setContentView(container)
         showSummary()
     }
 
-    // ---- summary screen: counts per bucket -----------------------------------------------------
+    private fun mainDir(): File = GalleryTransfer.recordingsDir(this) ?: filesDir
+    private fun sourceDir(): File = if (source == Source.MAIN) mainDir() else AutoReject.rejectedDir(mainDir())
+
+    // ---- summary screen: Main/Rejected toggle + counts per bucket --------------------------------
 
     private fun showSummary() {
         val density = resources.displayMetrics.density
@@ -59,9 +75,63 @@ class GroundTruthActivity : AppCompatActivity() {
             orientation = LinearLayout.VERTICAL
             setPadding(pad, pad, pad, pad)
         }
+
+        val toggle = LinearLayout(this).apply { orientation = LinearLayout.HORIZONTAL; setPadding(0, 0, 0, (8 * density).toInt()) }
+        fun toggleButton(label: String, s: Source): Button = Button(this).apply {
+            text = label
+            layoutParams = LinearLayout.LayoutParams(0, ViewGroup.LayoutParams.WRAP_CONTENT, 1f)
+            backgroundTintList = android.content.res.ColorStateList.valueOf(if (source == s) 0xFFFF69B4.toInt() else 0xFF444444.toInt())
+            setTextColor(if (source == s) 0xFF000000.toInt() else 0xFFEEEEEE.toInt())
+            setOnClickListener { source = s; showSummary() }
+        }
+        toggle.addView(toggleButton("Main Gallery", Source.MAIN))
+        toggle.addView(toggleButton("Rejected Clips", Source.REJECTED))
+        root.addView(toggle)
+
+        if (source == Source.REJECTED) {
+            val bulk = LinearLayout(this).apply { orientation = LinearLayout.HORIZONTAL; setPadding(0, 0, 0, (8 * density).toInt()) }
+            bulk.addView(Button(this).apply {
+                text = "Restore All"
+                layoutParams = LinearLayout.LayoutParams(0, ViewGroup.LayoutParams.WRAP_CONTENT, 1f)
+                setOnClickListener {
+                    AlertDialog.Builder(this@GroundTruthActivity)
+                        .setTitle("Restore all rejected clips?")
+                        .setMessage("Moves every clip in rejected/ back to the main gallery.")
+                        .setPositiveButton("Restore all") { _, _ ->
+                            thread {
+                                val n = AutoReject.restoreAll(mainDir())
+                                runOnUiThread { Toast.makeText(this@GroundTruthActivity, "Restored $n clip(s)", Toast.LENGTH_LONG).show(); showSummary() }
+                            }
+                        }
+                        .setNegativeButton("Cancel", null).show()
+                }
+            })
+            bulk.addView(Button(this).apply {
+                text = "Delete All"
+                layoutParams = LinearLayout.LayoutParams(0, ViewGroup.LayoutParams.WRAP_CONTENT, 1f)
+                setOnClickListener {
+                    AlertDialog.Builder(this@GroundTruthActivity)
+                        .setTitle("Permanently delete all rejected clips?")
+                        .setMessage("This cannot be undone.")
+                        .setPositiveButton("Delete all") { _, _ ->
+                            thread {
+                                val n = AutoReject.deleteAll(mainDir())
+                                runOnUiThread { Toast.makeText(this@GroundTruthActivity, "Deleted $n clip(s)", Toast.LENGTH_LONG).show(); showSummary() }
+                            }
+                        }
+                        .setNegativeButton("Cancel", null).show()
+                }
+            })
+            root.addView(bulk)
+        }
+
         val header = TextView(this).apply {
-            text = "Buckets clips by ground truth. Coughs are rare — review each. Breath/noise/voice are " +
-                "abundant — the codebook has no breathing class yet, so please correct any misfires."
+            text = if (source == Source.MAIN)
+                "Buckets clips by ground truth. Coughs are rare — review each. Breath/noise/voice are " +
+                    "abundant — the codebook has no breathing class yet, so please correct any misfires."
+            else
+                "Clips auto-rejected as noise/voice. Each shows WHY it was flagged (decoder guess + the " +
+                    "trained head's P(cough)) — check for any confirmed cough that got swept in by mistake."
             setTextColor(0xFF999999.toInt()); textSize = 13f
             setPadding(0, 0, 0, (12 * density).toInt())
         }
@@ -72,7 +142,7 @@ class GroundTruthActivity : AppCompatActivity() {
         container.removeAllViews(); container.addView(scroll)
 
         thread {
-            val dir = GalleryTransfer.recordingsDir(this) ?: filesDir
+            val dir = sourceDir()
             val wavs = dir.listFiles { f -> f.isFile && (f.extension.equals("wav", true) || f.extension.equals("flac", true)) }
                 ?.toList() ?: emptyList()
             val byCat = wavs.groupBy { GroundTruthBucket.bucketOf(it) }
@@ -90,10 +160,9 @@ class GroundTruthActivity : AppCompatActivity() {
     }
 
     private fun buildSummaryRow(r: Row, allWavs: List<File>): View {
-        val density = resources.displayMetrics.density
         val row = LinearLayout(this).apply {
             orientation = LinearLayout.HORIZONTAL
-            setPadding(0, (10 * density).toInt(), 0, (10 * density).toInt())
+            setPadding(0, (10 * resources.displayMetrics.density).toInt(), 0, (10 * resources.displayMetrics.density).toInt())
         }
         val label = TextView(this).apply {
             text = "${GroundTruthBucket.displayName(r.cat)}: ${r.total} (${r.confirmed} confirmed, ${r.total - r.confirmed} unconfirmed)"
@@ -115,6 +184,7 @@ class GroundTruthActivity : AppCompatActivity() {
                 startActivity(Intent(this@GroundTruthActivity, ReviewActivity::class.java).apply {
                     putExtra(ReviewActivity.EX_CATEGORY, r.cat.name)
                     putExtra(ReviewActivity.EX_ONLY_UNCONFIRMED, true)
+                    putExtra(ReviewActivity.EX_SOURCE, source.name)
                 })
             }
         })
@@ -145,35 +215,47 @@ class GroundTruthActivity : AppCompatActivity() {
         root.addView(recycler)
         container.removeAllViews(); container.addView(root)
 
+        val rejectedMode = source == Source.REJECTED
         thread {
             val items = allWavs.filter { GroundTruthBucket.bucketOf(it).category == cat }
                 .sortedByDescending { it.lastModified() }
-            runOnUiThread { recycler.adapter = ClipListAdapter(items) }
+            // Diagnose (decoder label/confidence + head P(cough)) only makes sense for rejected clips —
+            // it's cheap when a .phon is already cached, but may decode fresh for older sweep-rejected
+            // clips that predate the annotate() fix, so it's computed off the UI thread.
+            val diag = if (rejectedMode) items.associateWith { AutoReject.diagnose(this, it) } else emptyMap()
+            runOnUiThread { recycler.adapter = ClipListAdapter(items.toMutableList(), diag) }
         }
     }
 
-    private inner class ClipListAdapter(private val items: List<File>) : RecyclerView.Adapter<ClipListAdapter.VH>() {
-        inner class VH(val root: LinearLayout, val icon: ImageView, val text: TextView) : RecyclerView.ViewHolder(root)
+    private inner class ClipListAdapter(
+        private val items: MutableList<File>,
+        private val diag: Map<File, String>,
+    ) : RecyclerView.Adapter<ClipListAdapter.VH>() {
+        inner class VH(val root: LinearLayout, val icon: ImageView, val text: TextView, val restore: Button) : RecyclerView.ViewHolder(root)
 
         override fun onCreateViewHolder(parent: ViewGroup, viewType: Int): VH {
             val density = resources.displayMetrics.density
             val icon = ImageView(parent.context).apply {
                 layoutParams = LinearLayout.LayoutParams((56 * density).toInt(), (56 * density).toInt())
             }
-            val text = TextView(parent.context).apply {
+            val textView = TextView(parent.context).apply {
                 setTextColor(0xFFEEEEEE.toInt()); textSize = 13f
                 layoutParams = LinearLayout.LayoutParams(0, ViewGroup.LayoutParams.WRAP_CONTENT, 1f)
                 setPadding((12 * density).toInt(), 0, 0, 0)
-                maxLines = 3
+                maxLines = 4
+            }
+            val restore = Button(parent.context).apply {
+                text = "Restore"
+                visibility = if (source == Source.REJECTED) View.VISIBLE else View.GONE
             }
             val row = LinearLayout(parent.context).apply {
                 orientation = LinearLayout.HORIZONTAL
                 setPadding((16 * density).toInt(), (8 * density).toInt(), (16 * density).toInt(), (8 * density).toInt())
                 gravity = Gravity.CENTER_VERTICAL
                 layoutParams = ViewGroup.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.WRAP_CONTENT)
-                addView(icon); addView(text)
+                addView(icon); addView(textView); addView(restore)
             }
-            return VH(row, icon, text)
+            return VH(row, icon, textView, restore)
         }
 
         override fun onBindViewHolder(holder: VH, position: Int) {
@@ -185,11 +267,24 @@ class GroundTruthActivity : AppCompatActivity() {
             } else holder.icon.setImageResource(android.R.drawable.ic_menu_report_image)
             val bucket = GroundTruthBucket.bucketOf(f)
             val raw = if (bucket.confirmed) "confirmed: ${bucket.sourceText}" else "predicted: ${bucket.sourceText.ifBlank { "?" }}"
-            holder.text.text = "${dateFmt.format(Date(f.lastModified()))}\n${GroundTruthBucket.statusLine(bucket)}\n$raw"
+            val diagLine = diag[f]?.let { "\nauto: $it" } ?: ""
+            holder.text.text = "${dateFmt.format(Date(f.lastModified()))}\n${GroundTruthBucket.statusLine(bucket)}\n$raw$diagLine"
             holder.root.setOnClickListener {
                 startActivity(Intent(this@GroundTruthActivity, ViewerActivity::class.java).apply {
                     putExtra("FILE_PATH", f.absolutePath)
                 })
+            }
+            holder.restore.setOnClickListener {
+                thread {
+                    val ok = AutoReject.restoreOne(mainDir(), f)
+                    runOnUiThread {
+                        if (ok) {
+                            val pos = items.indexOf(f)
+                            if (pos >= 0) { items.removeAt(pos); notifyItemRemoved(pos) }
+                            Toast.makeText(this@GroundTruthActivity, "Restored ${f.name}", Toast.LENGTH_SHORT).show()
+                        } else Toast.makeText(this@GroundTruthActivity, "Restore failed", Toast.LENGTH_SHORT).show()
+                    }
+                }
             }
         }
 

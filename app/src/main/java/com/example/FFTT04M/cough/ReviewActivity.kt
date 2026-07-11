@@ -43,8 +43,11 @@ class ReviewActivity : AppCompatActivity() {
     companion object {
         const val EX_CATEGORY = "CATEGORY"
         const val EX_ONLY_UNCONFIRMED = "ONLY_UNCONFIRMED"
+        const val EX_SOURCE = "SOURCE"
         const val CATEGORY_ALL = "ALL"
     }
+
+    private enum class Source { MAIN, REJECTED }
 
     private val dateFmt = SimpleDateFormat("MMM d, HH:mm:ss", Locale.US)
     private var queue: List<File> = emptyList()
@@ -52,6 +55,9 @@ class ReviewActivity : AppCompatActivity() {
     private var reviewedThisSession = 0
     private var player: MediaPlayer? = null
     private var filterCategory: GroundTruthBucket.Category? = null
+    private var source = Source.MAIN
+
+    private fun mainDir(): File = GalleryTransfer.recordingsDir(this) ?: filesDir
 
     // Views
     private lateinit var root: LinearLayout
@@ -66,14 +72,16 @@ class ReviewActivity : AppCompatActivity() {
         val catName = intent.getStringExtra(EX_CATEGORY) ?: CATEGORY_ALL
         filterCategory = runCatching { GroundTruthBucket.Category.valueOf(catName) }.getOrNull()
         val onlyUnconfirmed = intent.getBooleanExtra(EX_ONLY_UNCONFIRMED, true)
-        title = "Review: ${filterCategory?.let { GroundTruthBucket.displayName(it) } ?: "All"}"
+        source = runCatching { Source.valueOf(intent.getStringExtra(EX_SOURCE) ?: "MAIN") }.getOrDefault(Source.MAIN)
+        title = "Review: ${filterCategory?.let { GroundTruthBucket.displayName(it) } ?: "All"}" +
+            if (source == Source.REJECTED) " (rejected)" else ""
 
         buildLayout()
         setContentView(root)
         progressText.text = "Scanning recordings…"
 
         thread {
-            val dir = GalleryTransfer.recordingsDir(this) ?: filesDir
+            val dir = if (source == Source.MAIN) mainDir() else AutoReject.rejectedDir(mainDir())
             val wavs = dir.listFiles { f -> f.isFile && (f.extension.equals("wav", true) || f.extension.equals("flac", true)) }
                 ?.toList() ?: emptyList()
             val filtered = wavs.filter { wav ->
@@ -194,6 +202,15 @@ class ReviewActivity : AppCompatActivity() {
         val bucket = GroundTruthBucket.bucketOf(f)
         hintText.text = if (bucket.sourceText.isNotBlank())
             "on-device guess: ${bucket.sourceText}" else "no on-device guess yet"
+        if (source == Source.REJECTED) {
+            // why THIS clip got auto-rejected (decoder label/confidence + head P(cough)) — may decode
+            // fresh for older sweep-rejected clips, so compute off the UI thread and guard against a
+            // stale update if the reviewer has already moved on by the time it finishes.
+            thread {
+                val diag = AutoReject.diagnose(this, f)
+                runOnUiThread { if (currentFile() == f) hintText.text = "${hintText.text}\nauto-rejected: $diag" }
+            }
+        }
         val png = File(f.parentFile, "${f.nameWithoutExtension}.png")
         if (png.isFile) {
             val opts = BitmapFactory.Options().apply { inSampleSize = 2 }
@@ -227,8 +244,17 @@ class ReviewActivity : AppCompatActivity() {
         val f = currentFile() ?: return
         GroundTruthBucket.setGroundTruth(f, label)
         reviewedThisSession++
+        if (source == Source.REJECTED && !isRejectMatchingCategory(GroundTruthBucket.bucketOf(f).category)) {
+            if (AutoReject.restoreOne(mainDir(), f))
+                Toast.makeText(this, "Restored to gallery (confirmed ${label})", Toast.LENGTH_SHORT).show()
+        }
         advance()
     }
+
+    /** Whether [cat] is a category AutoReject actually rejects for (noise/voice) — confirming anything
+     *  ELSE on a rejected clip means it was swept in by mistake, so it gets auto-restored to the gallery. */
+    private fun isRejectMatchingCategory(cat: GroundTruthBucket.Category) =
+        cat == GroundTruthBucket.Category.NOISE || cat == GroundTruthBucket.Category.VOICE
 
     private fun advance() {
         player?.release(); player = null
@@ -272,11 +298,16 @@ class ReviewActivity : AppCompatActivity() {
             .setPositiveButton("Confirm all") { _, _ ->
                 thread {
                     for (f in remaining) GroundTruthBucket.setGroundTruth(f, label)
+                    var restored = 0
+                    if (source == Source.REJECTED && !isRejectMatchingCategory(cat))
+                        for (f in remaining) if (AutoReject.restoreOne(mainDir(), f)) restored++
                     runOnUiThread {
                         reviewedThisSession += remaining.size
                         pos = queue.size
                         showCurrent()
-                        Toast.makeText(this, "Confirmed ${remaining.size} clip(s) as $label", Toast.LENGTH_LONG).show()
+                        val msg = "Confirmed ${remaining.size} clip(s) as $label" +
+                            if (restored > 0) " (restored $restored to gallery)" else ""
+                        Toast.makeText(this, msg, Toast.LENGTH_LONG).show()
                     }
                 }
             }

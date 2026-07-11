@@ -60,7 +60,13 @@ object AutoReject {
 
     /** One-time batch pass over an existing gallery: re-decode each clip with the current codebook and
      *  auto-reject the high-confidence non-coughs. Skips user-commented clips. Cancellable; reports
-     *  progress. Runs on a caller-supplied background thread. */
+     *  progress. Runs on a caller-supplied background thread.
+     *
+     *  Uses [PhonemeDecoder.annotate] (not the bare `decode()`) so the decision is PERSISTED to the
+     *  clip's `.phon` sidecar — it moves into `rejected/` together with the wav, so
+     *  [diagnose] can explain "why" without having to re-run the model later. (Real-time capture via
+     *  `CoughCaptureService` already annotates before checking reject; the batch sweep previously did
+     *  not, leaving swept clips with no cached auto-interpretation to inspect afterward.) */
     fun sweep(ctx: Context, dir: File, onProgress: (Int, Int) -> Unit, cancelled: () -> Boolean): Sweep {
         val wavs = dir.listFiles { f -> f.isFile && f.extension.equals("wav", true) } ?: return Sweep(0, 0)
         var rejected = 0
@@ -69,7 +75,7 @@ object AutoReject {
             onProgress(i + 1, wavs.size)
             if (File(dir, "${wav.nameWithoutExtension}.txt").isFile) continue   // commented → skip (fast path)
             val data = runCatching { com.example.FFTT04M.WavReader.read(wav) }.getOrNull() ?: continue
-            val decoded = PhonemeDecoder.decode(ctx, data.samples, data.sampleRate) ?: continue
+            val decoded = runCatching { PhonemeDecoder.annotate(ctx, wav, data.samples, data.sampleRate) }.getOrNull() ?: continue
             if (reject(ctx, wav, decoded)) rejected++
         }
         Log.i(TAG, "sweep: rejected $rejected of ${wavs.size}")
@@ -96,5 +102,39 @@ object AutoReject {
         val trash = rejectedDir(dir); var n = 0
         trash.listFiles()?.forEach { f -> val wav = f.extension.equals("wav", true); if (f.delete() && wav) n++ }
         return n
+    }
+
+    /** Restore ONE rejected clip (+ sidecars) back to [dir] (the recordings dir, NOT rejected/ itself). */
+    fun restoreOne(dir: File, rejectedWav: File): Boolean {
+        val trash = rejectedWav.parentFile ?: return false
+        val base = rejectedWav.nameWithoutExtension
+        var moved = false
+        for (ext in listOf("wav", "png", "txt", "phon", "json")) {
+            val f = File(trash, "$base.$ext")
+            if (f.isFile) {
+                val ok = runCatching { f.renameTo(File(dir, f.name)) }.getOrDefault(false)
+                if (ext == "wav") moved = ok
+            }
+        }
+        return moved
+    }
+
+    /** Human-readable "why was this flagged" diagnostic for a clip sitting in rejected/ (or anywhere):
+     *  the decoder's predicted label/confidence and, when a HuBERT embedding is available, the trained
+     *  head's P(cough) — the two signals [eligible] actually checks. Decodes fresh (and persists via
+     *  `annotate`, fixing any clip that was rejected before the sweep-caching fix above) when no cached
+     *  `.phon` exists yet. Returns "no decode available" if the clip can't be read/decoded at all. */
+    fun diagnose(ctx: Context, wav: File): String {
+        val dir = wav.parentFile
+        val base = wav.nameWithoutExtension
+        val cached = dir?.let { PhonemeDecoder.read(it, base) }
+        val decoded = cached ?: run {
+            val data = runCatching { com.example.FFTT04M.WavReader.read(wav) }.getOrNull() ?: return "no decode available"
+            runCatching { PhonemeDecoder.annotate(ctx, wav, data.samples, data.sampleRate) }.getOrNull()
+        } ?: return "no decode available"
+        val decoderPart = "decoder: ${decoded.label} (${(decoded.confidence * 100).let { "%.0f".format(it) }}%)"
+        val headPart = decoded.emb?.let { CoughVerifier.coughProbability(ctx, it) }
+            ?.let { "head P(cough)=${"%.2f".format(it)}" }
+        return if (headPart != null) "$decoderPart · $headPart" else decoderPart
     }
 }
