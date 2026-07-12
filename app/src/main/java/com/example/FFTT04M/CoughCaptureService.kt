@@ -159,7 +159,7 @@ class CoughCaptureService : Service() {
             }.getOrNull()
             // Tier 1+: autonomously reject a high-confidence non-cough capture (detector misfire) into the
             // recoverable rejected/ subfolder — no thumbnail needed, and refresh the gallery.
-            if (decoded != null && com.example.FFTT04M.cough.AutoReject.reject(this, wav, decoded)) {
+            if (decoded != null && com.example.FFTT04M.cough.AutoReject.reject(this, wav, decoded, c.pcm, sampleRate)) {
                 runCatching { sendBroadcast(Intent(TransferService.ACTION_PROGRESS).setPackage(packageName)) }
                 return@thread
             }

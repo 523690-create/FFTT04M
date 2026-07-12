@@ -24,22 +24,32 @@ object AutoReject {
     const val SUBDIR = "rejected"
     private val NON_COUGH = setOf("noise", "voice")
     private const val MIN_CONFIDENCE = 0.8
-    private const val COUGH_PROB_FLOOR = 0.25f   // reject when the trained head is this confident it's NOT a cough
+    // Reject when the in-domain VOTE is this confident the clip is NOT a cough. Deliberately conservative
+    // (well below the vote's 90%-recall operating point ≈0.26) so a real cough is very unlikely to be
+    // rejected — AutoReject must never lose data. This is the tunable "specificity" knob (future: expose
+    // it in the gallery as a spinner, per the desktop roadmap).
+    private const val VOTE_REJECT_THRESHOLD = 0.20f
 
-    fun eligible(ctx: Context, d: PhonemeDecoder.Decoded): Boolean {
+    /** [pcm]/[sr] (when available) enable the in-domain [CoughVote]; without them only the codebook
+     *  letter rule applies. */
+    fun eligible(ctx: Context, d: PhonemeDecoder.Decoded, pcm: FloatArray? = null, sr: Int = 44100): Boolean {
         if (DeviceCaps.tier(ctx) < 1) return false
-        // The multi-class decoder is the RELIABLE signal: it's trained on the user's own labelled clips,
-        // so it correctly IDs their voice/noise. The bundled binary head was trained on ALLDATA
-        // (coswara/urban8k) voice, which is OUT-OF-DISTRIBUTION from the user's voice — it confidently
-        // MISlabels it as cough. So the head may only ADD a rejection, never VETO the multi-class one.
+        // PRIMARY: the in-domain VOTE (forest + in-domain HuBERT head + DSP cues), trained on the user's
+        // own clips. This supersedes the old ALLDATA cough-head check, which was OUT-OF-DISTRIBUTION for
+        // the user's voice (it MISlabelled their voice as cough); the vote's head is trained in-domain.
+        val voteSaysNotCough = if (pcm != null)
+            CoughVote.probability(ctx, pcm, sr, d.emb)?.let { it < VOTE_REJECT_THRESHOLD } ?: false
+        else false
+        // ORTHOGONAL in-domain signal: the multi-class decoder confidently calling it noise/voice. Also
+        // trained on the user's own labelled clips, so it correctly IDs their voice/noise.
         val letterSaysBackground = d.label in NON_COUGH && d.confidence >= MIN_CONFIDENCE
-        val headSaysNotCough = d.emb?.let { CoughVerifier.coughProbability(ctx, it) }?.let { it < COUGH_PROB_FLOOR } ?: false
-        return letterSaysBackground || headSaysNotCough
+        return voteSaysNotCough || letterSaysBackground
     }
 
-    /** Move [wav] + its sidecars to `<recordingsDir>/rejected/`. Returns true if the clip was rejected. */
-    fun reject(ctx: Context, wav: File, decoded: PhonemeDecoder.Decoded): Boolean {
-        if (!eligible(ctx, decoded)) return false
+    /** Move [wav] + its sidecars to `<recordingsDir>/rejected/`. Returns true if the clip was rejected.
+     *  Pass [pcm]/[sr] so the in-domain [CoughVote] can run (the caller already has the samples). */
+    fun reject(ctx: Context, wav: File, decoded: PhonemeDecoder.Decoded, pcm: FloatArray? = null, sr: Int = 44100): Boolean {
+        if (!eligible(ctx, decoded, pcm, sr)) return false
         val dir = wav.parentFile ?: return false
         val base = wav.nameWithoutExtension
         if (File(dir, "$base.txt").exists()) return false        // user-labelled → never auto-reject
@@ -76,7 +86,7 @@ object AutoReject {
             if (File(dir, "${wav.nameWithoutExtension}.txt").isFile) continue   // commented → skip (fast path)
             val data = runCatching { com.example.FFTT04M.WavReader.read(wav) }.getOrNull() ?: continue
             val decoded = runCatching { PhonemeDecoder.annotate(ctx, wav, data.samples, data.sampleRate) }.getOrNull() ?: continue
-            if (reject(ctx, wav, decoded)) rejected++
+            if (reject(ctx, wav, decoded, data.samples, data.sampleRate)) rejected++
         }
         Log.i(TAG, "sweep: rejected $rejected of ${wavs.size}")
         return Sweep(wavs.size, rejected)
@@ -133,8 +143,10 @@ object AutoReject {
             runCatching { PhonemeDecoder.annotate(ctx, wav, data.samples, data.sampleRate) }.getOrNull()
         } ?: return "no decode available"
         val decoderPart = "decoder: ${decoded.label} (${(decoded.confidence * 100).let { "%.0f".format(it) }}%)"
-        val headPart = decoded.emb?.let { CoughVerifier.coughProbability(ctx, it) }
-            ?.let { "head P(cough)=${"%.2f".format(it)}" }
-        return if (headPart != null) "$decoderPart · $headPart" else decoderPart
+        // Show the in-domain vote's P(cough) when we can read the samples (the reliable "why").
+        val votePart = runCatching { com.example.FFTT04M.WavReader.read(wav) }.getOrNull()?.let { d ->
+            CoughVote.probability(ctx, d.samples, d.sampleRate, decoded.emb)
+        }?.let { "vote P(cough)=${"%.2f".format(it)}" }
+        return if (votePart != null) "$decoderPart · $votePart" else decoderPart
     }
 }
