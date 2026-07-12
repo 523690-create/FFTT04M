@@ -106,10 +106,12 @@ class MixedReviewActivity : AppCompatActivity() {
             val data = runCatching { WavReader.read(f) }.getOrNull()
             val decoded = PhonemeDecoder.read(f.parentFile ?: mainDir(), f.nameWithoutExtension)
             val comps = if (data != null && decoded != null)
-                MixedClipBreaker.components(decoded.word, PhonemeDecoder.windowSpans(data.samples, data.sampleRate)) else null
+                MixedClipBreaker.analyze(decoded.word, PhonemeDecoder.windowSpans(data.samples, data.sampleRate), data.samples, data.sampleRate) else null
             runOnUiThread {
                 if (data == null || comps == null || !MixedClipBreaker.isMixed(comps)) {
-                    // stale flag (e.g. codebook changed) — skip transparently
+                    // Acoustic re-validation overturned the older letter-only flag (not really mixed).
+                    // Clear the stale flag so it drops out of the gallery count, then skip transparently.
+                    if (decoded != null) thread { runCatching { PhonemeDecoder.setMixed(f, decoded, false) } }
                     advance(); return@runOnUiThread
                 }
                 current = Item(f, data.samples, data.sampleRate, comps)

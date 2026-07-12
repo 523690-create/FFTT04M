@@ -181,7 +181,7 @@ object PhonemeDecoder {
         // Compute every CoughVote score once here (pcm + emb both in hand) and cache it in the .phon,
         // so the gallery / ground-truth lists can show all votes without re-running anything.
         val bd = runCatching { CoughVote.breakdown(ctx, pcm, sr, d.emb) }.getOrNull()
-        val mixed = runCatching { MixedClipBreaker.isMixed(MixedClipBreaker.components(d.word, windowSpans(pcm, sr))) }.getOrDefault(false)
+        val mixed = runCatching { MixedClipBreaker.isMixed(MixedClipBreaker.analyze(d.word, windowSpans(pcm, sr), pcm, sr)) }.getOrDefault(false)
         val full = d.copy(forestP = bd?.forestP, headP = bd?.headP, voteP = bd?.voteP, mixed = mixed)
         writePhon(wav, full)
         return full
@@ -218,6 +218,15 @@ object PhonemeDecoder {
         } catch (_: Throwable) { null }
     }
 
+    /** Persist a corrected `mixed` flag (preserving emb + vote scores) — used when acoustic re-validation
+     *  overturns the older letter-only flag, so stale positives drop out of the gallery count over time. */
+    fun setMixed(wav: File, d: Decoded, mixed: Boolean): Decoded {
+        if (d.mixed == mixed) return d
+        val full = d.copy(mixed = mixed)
+        writePhon(wav, full)
+        return full
+    }
+
     /** Cheap "is this clip mixed?" check that reads the `.phon` TEXT and looks for the flag, WITHOUT
      *  JSON-parsing the (768-float) embedding — safe to call over a whole gallery. Still do it off the main
      *  thread for large galleries (file I/O). */
@@ -247,7 +256,7 @@ object PhonemeDecoder {
     fun ensureVotes(ctx: Context, wav: File, pcm: FloatArray, sr: Int, d: Decoded): Decoded {
         if (d.voteP != null) return d
         val bd = runCatching { CoughVote.breakdown(ctx, pcm, sr, d.emb) }.getOrNull() ?: return d
-        val mixed = runCatching { MixedClipBreaker.isMixed(MixedClipBreaker.components(d.word, windowSpans(pcm, sr))) }.getOrDefault(false)
+        val mixed = runCatching { MixedClipBreaker.isMixed(MixedClipBreaker.analyze(d.word, windowSpans(pcm, sr), pcm, sr)) }.getOrDefault(false)
         val full = d.copy(forestP = bd.forestP, headP = bd.headP, voteP = bd.voteP, mixed = mixed)
         writePhon(wav, full)
         return full

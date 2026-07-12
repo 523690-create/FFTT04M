@@ -1,18 +1,24 @@
 package com.example.FFTT04M.cough
 
 import java.io.File
+import kotlin.math.sqrt
 
 /**
  * Splits a MIXED capture — one that contains BOTH cough and voice (the detector sometimes fires on a
  * cough that lands in the middle of speech) — into its component spans, so the clean cough can be kept
  * as training data instead of a cough+voice blob that muddies the codebook.
  *
- * It reuses the per-window phoneme decode already cached in the `.phon`: each 180/90 ms window carries a
- * phoneme code whose LETTER maps to a coarse class (cough family vs voice vs other). Contiguous same-class
- * windows are merged into spans; a clip with a cough span AND a voice span (each long enough) is "mixed".
+ * Candidate spans come from the per-window phoneme decode (each 180/90 ms window's letter → coarse class),
+ * but the codebook LETTERS are unreliable on out-of-distribution sounds — printer/mechanical noise and
+ * silence scatter into stray cough+voice letters, and a pure cough/voice clip picks up the odd wrong
+ * window. So [analyze] does NOT trust the letters alone: it ACOUSTICALLY VALIDATES each candidate (a real
+ * cough span must be an impulsive burst; a real voice span must be voiced+tonal) and REFINES the cough
+ * boundary to the actual burst via the energy envelope. Only clips with a validated cough AND a validated
+ * voice span survive as "mixed" — this is what cuts the false positives (see the 2026-07-12 review: 13/33
+ * good under the letter-only version).
  *
- * Detection is cheap (reads the cached decode). Extraction/splitting only happens for clips the user
- * confirms in [MixedReviewActivity] — the "manual verification for only those clips" requirement.
+ * Extraction/splitting only happens for clips the user confirms in [MixedReviewActivity] — the "manual
+ * verification for only those clips" requirement.
  */
 object MixedClipBreaker {
 
@@ -20,7 +26,17 @@ object MixedClipBreaker {
     // subtypes; voice = spoken; everything else (noise/snore/sneeze/music/?) is neither.
     private val COUGH_LETTERS = setOf("D", "DH", "B", "BT", "C", "CX", "CR", "W", "DC")
     private val VOICE_LETTERS = setOf("V", "SP")
-    private const val MIN_SPAN_MS = 200            // ignore spans shorter than this (stray single window)
+    private const val MIN_SPAN_MS = 220            // ignore spans shorter than this
+    private const val MIN_WINDOWS = 3              // …and require at least this many windows (not a stray)
+
+    // Acoustic validation thresholds (WholeClipFeatures on the span; tunable). A cough is an IMPULSIVE
+    // burst → high crest; sustained voice and steady printer/fan noise are much less peaky. Voice is
+    // VOICED + TONAL → strong pitch periodicity and a non-flat (harmonic) spectrum; cough and noise are
+    // aperiodic and spectrally flat.
+    private const val COUGH_MIN_CREST = 4.5
+    private const val VOICE_MIN_PITCH = 0.30
+    private const val VOICE_MAX_FLATNESS = 0.55
+    // WholeClipFeatures indices used here: 0 crest, 6 flatness, 11 pitch_strength.
 
     enum class Kind { COUGH, VOICE, OTHER }
     data class Component(val kind: Kind, val startMs: Int, val endMs: Int) {
@@ -50,44 +66,63 @@ object MixedClipBreaker {
             var j = i
             while (j + 1 < kinds.size &&
                 (kinds[j + 1] == k || (kinds[j + 1] == Kind.OTHER && j + 2 < kinds.size && kinds[j + 2] == k))) j++
-            comps.add(Component(k, spans[i].first, spans[j].second))
+            val startIdx = i; val endIdx = j
+            if (endIdx - startIdx + 1 >= MIN_WINDOWS) comps.add(Component(k, spans[startIdx].first, spans[endIdx].second))
             i = j + 1
         }
         return comps.filter { it.durMs >= MIN_SPAN_MS }
     }
 
-    /** A clip is mixed when it has at least one qualifying cough span AND one qualifying voice span. */
+    /**
+     * The VALIDATED, boundary-refined components — the letters propose candidates, the AUDIO confirms them.
+     * A cough candidate is kept only if, after trimming to its energy burst, it's impulsive enough
+     * (crest); a voice candidate only if it's voiced+tonal (pitch high, flatness low). This is what
+     * rejects the "neither cough nor voice" false positives (printer noise, silence) and the pure-cough/
+     * pure-voice clips that picked up a stray wrong-class window. Needs the audio; returns null if the
+     * decode/grid don't line up.
+     */
+    fun analyze(word: List<String>, spans: List<Pair<Int, Int>>, pcm: FloatArray, sr: Int): List<Component>? {
+        val raw = components(word, spans) ?: return null
+        val out = ArrayList<Component>()
+        for (c in raw) when (c.kind) {
+            Kind.COUGH -> {
+                val refined = refineBurst(pcm, sr, c)
+                val f = WholeClipFeatures.extract(extract(pcm, sr, refined), sr)
+                if (f[0] >= COUGH_MIN_CREST) out.add(refined)          // crest → impulsive → real cough burst
+            }
+            Kind.VOICE -> {
+                val f = WholeClipFeatures.extract(extract(pcm, sr, c), sr)
+                if (f[11] >= VOICE_MIN_PITCH && f[6] <= VOICE_MAX_FLATNESS) out.add(c)   // voiced + tonal
+            }
+            else -> {}
+        }
+        return out
+    }
+
+    /** A clip is mixed when it has at least one (validated) cough span AND one (validated) voice span. */
     fun isMixed(comps: List<Component>?): Boolean {
         val c = comps ?: return false
         return c.any { it.kind == Kind.COUGH } && c.any { it.kind == Kind.VOICE }
     }
 
-    /** Detect mixed purely from the cached decode (no audio read) — for the fast gallery scan. Needs the
-     *  clip's duration to rebuild the window grid; pass it from the WAV header. */
-    fun isMixedCached(decoded: PhonemeDecoder.Decoded?, durationMs: Int): Boolean {
-        val word = decoded?.word ?: return false
-        if (word.isEmpty()) return false
-        val spans = gridFor(durationMs, word.size) ?: return false
-        return isMixed(components(word, spans))
-    }
-
-    /** Rebuild the fixed 180/90 ms window grid for a duration, trusting [nWindows] from the cached word
-     *  (so we don't need to re-read the audio just to count windows). Null if it can't be reconciled. */
-    private fun gridFor(durationMs: Int, nWindows: Int): List<Pair<Int, Int>>? {
-        if (durationMs <= 0 || nWindows <= 0) return null
-        val win = 180; val hop = 90
-        val out = ArrayList<Pair<Int, Int>>()
-        if (durationMs <= win) { out.add(0 to durationMs) }
-        else {
-            var s = 0
-            while (s < durationMs) {
-                val e = (s + win).coerceAtMost(durationMs)
-                if (e - s >= win / 2) out.add(s to e)
-                if (e >= durationMs) break
-                s += hop
-            }
-        }
-        return if (out.size == nWindows) out else null
+    /** Trim a cough candidate to its actual burst: drop leading/trailing frames below 18% of the span's
+     *  peak RMS envelope (10 ms frames), so voice/silence bleed at the edges doesn't widen the cough clip
+     *  and the split boundary lands on the real onset/offset. Falls back to the input if too short. */
+    private fun refineBurst(pcm: FloatArray, sr: Int, c: Component): Component {
+        val s0 = (c.startMs / 1000.0 * sr).toInt().coerceIn(0, pcm.size)
+        val e0 = (c.endMs / 1000.0 * sr).toInt().coerceIn(s0, pcm.size)
+        val frame = (sr / 100).coerceAtLeast(1)                 // 10 ms
+        val nF = (e0 - s0) / frame
+        if (nF < 4) return c
+        val env = DoubleArray(nF) { i -> var s = 0.0; val base = s0 + i * frame; for (j in 0 until frame) { val v = pcm[base + j].toDouble(); s += v * v }; sqrt(s / frame) }
+        val peak = env.max()
+        if (peak <= 0) return c
+        val thr = peak * 0.18
+        var a = 0; while (a < nF && env[a] < thr) a++
+        var b = nF - 1; while (b > a && env[b] < thr) b--
+        if (b <= a) return c
+        val ns = s0 + a * frame; val ne = s0 + (b + 1) * frame
+        return Component(c.kind, (ns * 1000L / sr).toInt(), (ne * 1000L / sr).toInt())
     }
 
     /** Extract [c]'s PCM sub-range from the whole-clip [pcm]. */
