@@ -306,7 +306,10 @@ class GroundTruthActivity : AppCompatActivity() {
             val bucket = GroundTruthBucket.bucketOf(f)
             val raw = if (bucket.confirmed) "confirmed: ${bucket.sourceText}" else "predicted: ${bucket.sourceText.ifBlank { "?" }}"
             val diagLine = diag[f]?.let { "\nauto: $it" } ?: ""
-            holder.text.text = "${dateFmt.format(Date(f.lastModified()))}\n${GroundTruthBucket.statusLine(bucket)}\n$raw$diagLine"
+            val votesLine = f.parentFile?.let { PhonemeDecoder.read(it, f.nameWithoutExtension) }
+                ?.let { PhonemeDecoder.votesLine(it) }?.let { "\n$it" } ?: ""
+            holder.text.maxLines = 5
+            holder.text.text = "${dateFmt.format(Date(f.lastModified()))}\n${GroundTruthBucket.statusLine(bucket)}\n$raw$diagLine$votesLine"
             holder.root.setOnClickListener {
                 startActivity(Intent(this@GroundTruthActivity, ViewerActivity::class.java).apply {
                     putExtra("FILE_PATH", f.absolutePath)

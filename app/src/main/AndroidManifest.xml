@@ -120,6 +120,12 @@
             android:screenOrientation="fullSensor" />
 
         <activity
+            android:name=".cough.MixedReviewActivity"
+            android:exported="false"
+            android:label="Break up mixed clips"
+            android:screenOrientation="fullSensor" />
+
+        <activity
             android:name=".LatencyActivity"
             android:exported="false"
             android:screenOrientation="fullSensor" />

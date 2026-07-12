@@ -96,7 +96,12 @@ object PhonemeDecoder {
      *  whole-clip mean HuBERT embedding (768-dim) when decoded via HuBERT — cached for the clip-cloud
      *  view so it need not re-run the model; null on the DSP path. */
     data class Decoded(val letter: String, val label: String, val word: List<String>, val emb: FloatArray? = null,
-                       val confidence: Double = 0.0)
+                       val confidence: Double = 0.0,
+                       // Cached CoughVote scores (see CoughVote.Breakdown) so the gallery/ground-truth lists
+                       // can show every vote without recomputing. Null until computed for a clip.
+                       val forestP: Float? = null, val headP: Float? = null, val voteP: Float? = null,
+                       // True when the clip contains BOTH a cough and a voice span (see MixedClipBreaker).
+                       val mixed: Boolean = false)
 
     fun decode(ctx: Context, pcm: FloatArray, sr: Int): Decoded? {
         ensureLoaded(ctx)
@@ -173,12 +178,26 @@ object PhonemeDecoder {
      *  On the HuBERT path also stores the whole-clip embedding ("emb") for the clip-cloud view. */
     fun annotate(ctx: Context, wav: File, pcm: FloatArray, sr: Int): Decoded? {
         val d = decode(ctx, pcm, sr) ?: return null
+        // Compute every CoughVote score once here (pcm + emb both in hand) and cache it in the .phon,
+        // so the gallery / ground-truth lists can show all votes without re-running anything.
+        val bd = runCatching { CoughVote.breakdown(ctx, pcm, sr, d.emb) }.getOrNull()
+        val mixed = runCatching { MixedClipBreaker.isMixed(MixedClipBreaker.components(d.word, windowSpans(pcm, sr))) }.getOrDefault(false)
+        val full = d.copy(forestP = bd?.forestP, headP = bd?.headP, voteP = bd?.voteP, mixed = mixed)
+        writePhon(wav, full)
+        return full
+    }
+
+    /** Write a [Decoded] (incl. emb + cached vote scores + mixed flag) to `<wav>.phon`. Never touches `.txt`. */
+    private fun writePhon(wav: File, d: Decoded) {
         val out = File(wav.parentFile, wav.nameWithoutExtension + ".phon")
         val o = JSONObject()
             .put("letter", d.letter).put("label", d.label).put("word", JSONArray(d.word))
         d.emb?.let { e -> o.put("emb", JSONArray().apply { for (v in e) put(v.toDouble()) }) }
+        d.forestP?.let { o.put("forestP", it.toDouble()) }
+        d.headP?.let { o.put("headP", it.toDouble()) }
+        d.voteP?.let { o.put("voteP", it.toDouble()) }
+        if (d.mixed) o.put("mixed", true)
         runCatching { out.writeText(o.toString()) }
-        return d
     }
 
     /** Read a previously-written `<base>.phon` for display, or null. */
@@ -191,8 +210,38 @@ object PhonemeDecoder {
             val word = if (wa != null) List(wa.length()) { wa.getString(it) } else emptyList()
             val ea = o.optJSONArray("emb")
             val emb = if (ea != null) FloatArray(ea.length()) { ea.getDouble(it).toFloat() } else null
-            Decoded(o.optString("letter", "?"), o.optString("label", "?"), word, emb)
+            Decoded(o.optString("letter", "?"), o.optString("label", "?"), word, emb,
+                forestP = if (o.has("forestP")) o.getDouble("forestP").toFloat() else null,
+                headP = if (o.has("headP")) o.getDouble("headP").toFloat() else null,
+                voteP = if (o.has("voteP")) o.getDouble("voteP").toFloat() else null,
+                mixed = o.optBoolean("mixed", false))
         } catch (_: Throwable) { null }
+    }
+
+    /** The (startMs,endMs) window grid [decode] uses — aligned 1:1 with a [Decoded.word], so a word code
+     *  and its time span share an index. Used by [MixedClipBreaker] to map decoded classes back to time. */
+    fun windowSpans(pcm: FloatArray, sr: Int): List<Pair<Int, Int>> = fractionate(pcm, sr)
+
+    /** Compact one-line summary of every cached vote score (forest / in-domain head / fused), or null
+     *  if none are cached yet. Shown per-clip in the gallery + ground-truth lists. */
+    fun votesLine(d: Decoded?): String? {
+        val v = d?.voteP ?: return null
+        val sb = StringBuilder("votes  forest ").append(fmtP(d.forestP))
+        d.headP?.let { sb.append(" · head ").append(fmtP(it)) }
+        return sb.append(" · fused ").append(fmtP(v)).toString()
+    }
+    private fun fmtP(x: Float?) = if (x == null) "–" else String.format("%.2f", x)
+
+    /** Backfill the CoughVote scores into an already-decoded clip's `.phon` WITHOUT re-running HuBERT:
+     *  reuses the cached whole-clip embedding, recomputes only the cheap forest + DSP cues from [pcm].
+     *  No-op (returns the input) if the scores are already present or the fuser is unavailable. */
+    fun ensureVotes(ctx: Context, wav: File, pcm: FloatArray, sr: Int, d: Decoded): Decoded {
+        if (d.voteP != null) return d
+        val bd = runCatching { CoughVote.breakdown(ctx, pcm, sr, d.emb) }.getOrNull() ?: return d
+        val mixed = runCatching { MixedClipBreaker.isMixed(MixedClipBreaker.components(d.word, windowSpans(pcm, sr))) }.getOrDefault(false)
+        val full = d.copy(forestP = bd.forestP, headP = bd.headP, voteP = bd.voteP, mixed = mixed)
+        writePhon(wav, full)
+        return full
     }
 
     // ---- 13-dim fragment feature (WholeClipFeatures[14] minus syllabic; keep spectral_crest) ------

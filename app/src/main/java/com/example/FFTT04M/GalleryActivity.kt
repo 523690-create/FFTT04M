@@ -268,6 +268,7 @@ class GalleryActivity : AppCompatActivity() {
                         .putExtra(com.example.FFTT04M.cough.GroundTruthActivity.EX_SOURCE, "REJECTED"))
                     3 -> com.example.FFTT04M.cough.HubertModelManager.promptDownload(this@GalleryActivity)
                     4 -> startActivity(Intent(this@GalleryActivity, com.example.FFTT04M.cough.GroundTruthActivity::class.java))
+                    5 -> startActivity(Intent(this@GalleryActivity, com.example.FFTT04M.cough.MixedReviewActivity::class.java))
                 }
                 toolsSpinnerIgnoreNext = true
                 toolsSpinner.setSelection(0, false)
@@ -286,7 +287,11 @@ class GalleryActivity : AppCompatActivity() {
             is com.example.FFTT04M.cough.HubertModelManager.State.Downloading -> "Gold-standard model — downloading…"
             else -> "Download gold-standard model (361 MB, Wi-Fi)"
         }
-        val items = listOf("Tools ▾", "Auto-reject non-cough clips", "Rejected clips ($rejectedN)", modelLabel, "Ground truth review")
+        val mixedN = files.count { f ->
+            f.parentFile?.let { com.example.FFTT04M.cough.PhonemeDecoder.read(it, f.nameWithoutExtension)?.mixed } == true
+        }
+        val items = listOf("Tools ▾", "Auto-reject non-cough clips", "Rejected clips ($rejectedN)", modelLabel,
+            "Ground truth review", "Break up mixed clips ($mixedN)")
         val adapter = android.widget.ArrayAdapter(this, R.layout.spinner_item_gallery_pink, items)
         adapter.setDropDownViewResource(android.R.layout.simple_spinner_dropdown_item)
         toolsSpinnerIgnoreNext = true   // a fresh adapter re-fires onItemSelected(0) — ignore that echo
@@ -741,7 +746,7 @@ class GalleryActivity : AppCompatActivity() {
                 holder.textView.gravity = android.view.Gravity.START
                 holder.textView.maxLines = Int.MAX_VALUE
                 holder.commentView.gravity = android.view.Gravity.START
-                holder.commentView.maxLines = 5   // header + up to 3 matches show fully in the list
+                holder.commentView.maxLines = 7   // status + manual + decode word + votes line
                 holder.commentView.ellipsize = android.text.TextUtils.TruncateAt.END
             }
 
@@ -762,6 +767,8 @@ class GalleryActivity : AppCompatActivity() {
                 sb.append("≈ ").append(decoded.label).append(" (").append(decoded.letter).append("): ")
                     .append(decoded.word.joinToString(" "))
             }
+            // Every vote's score (forest / in-domain head / fused), cached in the .phon.
+            PhonemeDecoder.votesLine(decoded)?.let { sb.append('\n').append(it) }
             holder.commentView.visibility = View.VISIBLE
             holder.commentView.text = sb.toString()
 

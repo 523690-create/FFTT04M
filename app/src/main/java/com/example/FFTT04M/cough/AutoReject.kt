@@ -114,6 +114,19 @@ object AutoReject {
         return n
     }
 
+    /** Move a clip (+ sidecars) into rejected/ unconditionally — e.g. after a mixed clip has been broken
+     *  into components, the original blob is archived (recoverable) instead of muddying training. */
+    fun archiveToRejected(dir: File, wav: File): Boolean {
+        val base = wav.nameWithoutExtension
+        val trash = File(dir, SUBDIR).apply { if (!isDirectory) mkdirs() }
+        var moved = false
+        for (ext in listOf("wav", "png", "txt", "phon", "json")) {
+            val f = File(dir, "$base.$ext")
+            if (f.isFile) { val ok = runCatching { f.renameTo(File(trash, f.name)) }.getOrDefault(false); if (ext == "wav") moved = ok }
+        }
+        return moved
+    }
+
     /** Restore ONE rejected clip (+ sidecars) back to [dir] (the recordings dir, NOT rejected/ itself). */
     fun restoreOne(dir: File, rejectedWav: File): Boolean {
         val trash = rejectedWav.parentFile ?: return false

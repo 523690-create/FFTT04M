@@ -36,6 +36,11 @@ object ClipBackfill {
         // auto-match .txt (we don't write them anymore), so cleanup is genuinely one-time.
         val prefs = ctx.getSharedPreferences("app_settings", android.content.Context.MODE_PRIVATE)
         val migrated = prefs.getBoolean("phon_decode_v1", false)
+        // One-time: backfill the CoughVote scores into clips decoded before the vote existed (cheap —
+        // reuses the cached HuBERT embedding, recomputes only forest + DSP cues). New clips get them at
+        // annotate() time, so this is genuinely one-time.
+        val votesMigrated = prefs.getBoolean("phon_votes_v1", false)
+        var votes = 0
         try {
             val dir = GalleryTransfer.recordingsDir(ctx) ?: ctx.filesDir
             // ONE directory listing; membership via in-memory sets (per-file exists() on emulated
@@ -64,7 +69,10 @@ object ClipBackfill {
                 }
                 val needIcon = base !in haveIcon
                 val needDecode = base !in havePhon
-                if (needIcon || needDecode) {
+                // Backfill votes only for already-decoded clips that predate the vote (migration pass).
+                val existing = if (!votesMigrated && !needDecode) PhonemeDecoder.read(dir, base) else null
+                val needVotes = existing != null && existing.voteP == null
+                if (needIcon || needDecode || needVotes) {
                     val data = try { WavReader.read(wav) } catch (e: Throwable) {
                         failed++; android.util.Log.w("FFTT04M", "ClipBackfill: read failed ${wav.name}: ${e.message}")
                         if (changed) onProgress?.invoke(); continue
@@ -72,6 +80,9 @@ object ClipBackfill {
                     if (needDecode) {
                         runCatching { PhonemeDecoder.annotate(ctx, wav, data.samples, data.sampleRate) }
                         if (File(dir, "$base.phon").exists()) { decodes++; changed = true }
+                    } else if (needVotes) {
+                        runCatching { PhonemeDecoder.ensureVotes(ctx, wav, data.samples, data.sampleRate, existing!!) }
+                        votes++; changed = true
                     }
                     if (needIcon) {
                         runCatching {
@@ -85,14 +96,15 @@ object ClipBackfill {
                 }
                 if (changed) onProgress?.invoke()
             }
-            // Only mark the migration done after a COMPLETE (non-cancelled) pass.
+            // Only mark the migrations done after a COMPLETE (non-cancelled) pass.
             if (!migrated && !cancelled) prefs.edit().putBoolean("phon_decode_v1", true).apply()
+            if (!votesMigrated && !cancelled) prefs.edit().putBoolean("phon_votes_v1", true).apply()
         } catch (e: Throwable) {
             android.util.Log.w("FFTT04M", "ClipBackfill aborted: ${e.message}")
         } finally {
             running = false
             android.util.Log.i("FFTT04M",
-                "ClipBackfill done: +$icons icons, +$decodes decodes, $cleaned cleaned, $failed failed, " +
+                "ClipBackfill done: +$icons icons, +$decodes decodes, +$votes votes, $cleaned cleaned, $failed failed, " +
                 "${System.currentTimeMillis() - t0}ms (decoder ready=${PhonemeDecoder.isReady})")
         }
     }

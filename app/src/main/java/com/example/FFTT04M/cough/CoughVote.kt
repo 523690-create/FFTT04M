@@ -98,26 +98,34 @@ object CoughVote {
         return softmaxAt(logits, headCoughIdx)
     }
 
+    /** Every vote's score for a clip: the individual methods + the fused result. [headP] is null on the
+     *  DSP path (no HuBERT embedding); the fuser then uses the head's training mean internally. */
+    data class Breakdown(val forestP: Float, val headP: Float?, val voteP: Float)
+
     /**
-     * Fused P(cough) in [0,1] for a captured clip, or null if the fuser asset is unavailable.
+     * All vote scores for a captured clip, or null if the fuser asset is unavailable.
      * [emb] is the whole-clip HuBERT embedding when the clip was decoded on the HuBERT path (null on the
      * DSP path → the head vote is filled with its training mean).
      */
-    fun probability(ctx: Context, pcm: FloatArray, sampleRate: Int, emb: FloatArray?): Float? {
+    fun breakdown(ctx: Context, pcm: FloatArray, sampleRate: Int, emb: FloatArray?): Breakdown? {
         ensureLoaded(ctx)
         val mu = fMean ?: return null; val sd = fStd ?: return null; val ww = fw ?: return null; val bb = fb ?: return null
         val forestP = CoughClassifier.coughProb(pcm, sampleRate).let { if (it < 0.0) 0.5f else it.toFloat() }
-        val headP = emb?.let { deviceHeadP(it) } ?: headMean
+        val headP = emb?.let { deviceHeadP(it) }
         val wcf = WholeClipFeatures.extract(pcm, sampleRate)
         val x = floatArrayOf(
-            forestP, headP,
+            forestP, headP ?: headMean,
             wcf[CUE_IDX[0]].toFloat(), wcf[CUE_IDX[1]].toFloat(), wcf[CUE_IDX[2]].toFloat(),
             wcf[CUE_IDX[3]].toFloat(), wcf[CUE_IDX[4]].toFloat())
         if (x.size != mu.size) return null
         val z = FloatArray(x.size) { (x[it] - mu[it]) / sd[it] }
         val logits = FloatArray(ww.size) { k -> var s = bb[k]; val wk = ww[k]; for (j in z.indices) s += wk[j] * z[j]; s }
-        return softmaxAt(logits, fCoughIdx)
+        return Breakdown(forestP, headP, softmaxAt(logits, fCoughIdx))
     }
+
+    /** Fused P(cough) in [0,1], or null if the fuser asset is unavailable. */
+    fun probability(ctx: Context, pcm: FloatArray, sampleRate: Int, emb: FloatArray?): Float? =
+        breakdown(ctx, pcm, sampleRate, emb)?.voteP
 
     private fun softmaxAt(logits: FloatArray, idx: Int): Float {
         val mx = logits.max()
