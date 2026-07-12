@@ -49,8 +49,8 @@ class MixedReviewActivity : AppCompatActivity() {
         thread {
             val dir = mainDir()
             val wavs = dir.listFiles { f -> f.isFile && f.extension.equals("wav", true) }?.toList() ?: emptyList()
-            // Fast pass: trust the cached "mixed" flag in the .phon (no audio read).
-            val mixed = wavs.filter { PhonemeDecoder.read(dir, it.nameWithoutExtension)?.mixed == true }
+            // Fast pass: cheap flag-only read of the cached "mixed" flag (no audio, no emb parse).
+            val mixed = wavs.filter { PhonemeDecoder.isMixedQuick(dir, it.nameWithoutExtension) }
                 .sortedByDescending { it.lastModified() }
             runOnUiThread {
                 queue = mixed; pos = 0

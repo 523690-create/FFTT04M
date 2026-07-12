@@ -277,6 +277,23 @@ class GalleryActivity : AppCompatActivity() {
         }
     }
 
+    @Volatile private var mixedCount = -1   // -1 = not yet computed (see computeMixedCountAsync)
+
+    /** Count mixed clips OFF the main thread (cheap flag-only .phon read), then refresh the spinner label.
+     *  Guarded so it never loops: it only refreshes when the count actually changed. */
+    private fun computeMixedCountAsync() {
+        val snapshot = files.toList()
+        thread {
+            val n = snapshot.count { f -> f.parentFile?.let { com.example.FFTT04M.cough.PhonemeDecoder.isMixedQuick(it, f.nameWithoutExtension) } == true }
+            runOnUiThread {
+                if (n != mixedCount && !isFinishing && !isDestroyed) {
+                    mixedCount = n
+                    if (::toolsSpinner.isInitialized) refreshGalleryToolsSpinner()
+                }
+            }
+        }
+    }
+
     /** Rebuild the spinner's labels (rejected count + model state can change between opens) — called
      *  whenever the gallery reloads, same cadence the old dialog's numbers used to refresh at. */
     private fun refreshGalleryToolsSpinner() {
@@ -287,11 +304,12 @@ class GalleryActivity : AppCompatActivity() {
             is com.example.FFTT04M.cough.HubertModelManager.State.Downloading -> "Gold-standard model — downloading…"
             else -> "Download gold-standard model (361 MB, Wi-Fi)"
         }
-        val mixedN = files.count { f ->
-            f.parentFile?.let { com.example.FFTT04M.cough.PhonemeDecoder.read(it, f.nameWithoutExtension)?.mixed } == true
-        }
+        // mixedCount is computed OFF the main thread (see computeMixedCountAsync) — reading every clip's
+        // .phon here on the UI thread ANRs on slower devices (Pixel 3a: ~3.7s for 340 clips). Show the
+        // count once known, otherwise just the label.
+        val mixedLabel = if (mixedCount >= 0) "Break up mixed clips ($mixedCount)" else "Break up mixed clips"
         val items = listOf("Tools ▾", "Auto-reject non-cough clips", "Rejected clips ($rejectedN)", modelLabel,
-            "Ground truth review", "Break up mixed clips ($mixedN)")
+            "Ground truth review", mixedLabel)
         val adapter = android.widget.ArrayAdapter(this, R.layout.spinner_item_gallery_pink, items)
         adapter.setDropDownViewResource(android.R.layout.simple_spinner_dropdown_item)
         toolsSpinnerIgnoreNext = true   // a fresh adapter re-fires onItemSelected(0) — ignore that echo
@@ -640,6 +658,9 @@ class GalleryActivity : AppCompatActivity() {
         files = filesDir?.listFiles { file -> file.extension == "wav" || file.extension == "flac" }
             ?.sortedByDescending { it.lastModified() }
             ?.toMutableList() ?: mutableListOf()
+
+        // Refresh the mixed-clip count off the main thread (never read every .phon on the UI thread).
+        computeMixedCountAsync()
 
         // #4b: detect a freshly acquired recording (newest filename changed since last load) so we can
         // flash it — but only the first time we see a non-empty list, never on the very first load.

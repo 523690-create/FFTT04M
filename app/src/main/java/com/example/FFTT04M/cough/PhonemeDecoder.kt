@@ -218,6 +218,15 @@ object PhonemeDecoder {
         } catch (_: Throwable) { null }
     }
 
+    /** Cheap "is this clip mixed?" check that reads the `.phon` TEXT and looks for the flag, WITHOUT
+     *  JSON-parsing the (768-float) embedding — safe to call over a whole gallery. Still do it off the main
+     *  thread for large galleries (file I/O). */
+    fun isMixedQuick(dir: File, base: String): Boolean {
+        val f = File(dir, "$base.phon")
+        if (!f.isFile) return false
+        return runCatching { f.readText().contains("\"mixed\":true") }.getOrDefault(false)
+    }
+
     /** The (startMs,endMs) window grid [decode] uses — aligned 1:1 with a [Decoded.word], so a word code
      *  and its time span share an index. Used by [MixedClipBreaker] to map decoded classes back to time. */
     fun windowSpans(pcm: FloatArray, sr: Int): List<Pair<Int, Int>> = fractionate(pcm, sr)
