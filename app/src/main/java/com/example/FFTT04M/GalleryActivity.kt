@@ -269,6 +269,7 @@ class GalleryActivity : AppCompatActivity() {
                     3 -> com.example.FFTT04M.cough.HubertModelManager.promptDownload(this@GalleryActivity)
                     4 -> startActivity(Intent(this@GalleryActivity, com.example.FFTT04M.cough.GroundTruthActivity::class.java))
                     5 -> startActivity(Intent(this@GalleryActivity, com.example.FFTT04M.cough.MixedReviewActivity::class.java))
+                    6 -> showRejectSensitivityDialog()
                 }
                 toolsSpinnerIgnoreNext = true
                 toolsSpinner.setSelection(0, false)
@@ -308,12 +309,39 @@ class GalleryActivity : AppCompatActivity() {
         // .phon here on the UI thread ANRs on slower devices (Pixel 3a: ~3.7s for 340 clips). Show the
         // count once known, otherwise just the label.
         val mixedLabel = if (mixedCount >= 0) "Break up mixed clips ($mixedCount)" else "Break up mixed clips"
+        val sensitivity = "%.2f".format(com.example.FFTT04M.cough.AutoReject.voteRejectThreshold(this))
         val items = listOf("Tools ▾", "Auto-reject non-cough clips", "Rejected clips ($rejectedN)", modelLabel,
-            "Ground truth review", mixedLabel)
+            "Ground truth review", mixedLabel, "Reject sensitivity ($sensitivity)")
         val adapter = android.widget.ArrayAdapter(this, R.layout.spinner_item_gallery_pink, items)
         adapter.setDropDownViewResource(android.R.layout.simple_spinner_dropdown_item)
         toolsSpinnerIgnoreNext = true   // a fresh adapter re-fires onItemSelected(0) — ignore that echo
         toolsSpinner.adapter = adapter
+    }
+
+    /** Lets the user tune [com.example.FFTT04M.cough.AutoReject]'s VOTE_REJECT_THRESHOLD — the knob that
+     *  decides how aggressively fresh captures get auto-moved to rejected/. Higher = more clips rejected
+     *  (risk: could start rejecting real coughs); lower = more conservative (some noise/voice slips
+     *  through to the gallery instead). Persisted via AutoReject.setVoteRejectThreshold; the spinner label
+     *  refreshes to show the active value. */
+    private fun showRejectSensitivityDialog() {
+        val current = com.example.FFTT04M.cough.AutoReject.voteRejectThreshold(this)
+        val presets = listOf(
+            0.10f to "Conservative (0.10) — reject only very confident non-coughs",
+            0.20f to "Default (0.20)",
+            0.26f to "Balanced (0.26) — near the vote's 90%-recall point",
+            0.35f to "Aggressive (0.35) — may reject some real coughs",
+        )
+        val labels = presets.map { it.second }.toTypedArray()
+        val checked = presets.indexOfFirst { it.first == current }.let { if (it < 0) 1 else it }
+        AlertDialog.Builder(this)
+            .setTitle("Auto-reject sensitivity")
+            .setSingleChoiceItems(labels, checked) { dialog, which ->
+                com.example.FFTT04M.cough.AutoReject.setVoteRejectThreshold(this, presets[which].first)
+                refreshGalleryToolsSpinner()
+                dialog.dismiss()
+            }
+            .setNegativeButton("Close", null)
+            .show()
     }
 
     private fun confirmAndSweep(dir: File) {

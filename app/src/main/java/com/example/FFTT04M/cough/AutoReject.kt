@@ -24,11 +24,21 @@ object AutoReject {
     const val SUBDIR = "rejected"
     private val NON_COUGH = setOf("noise", "voice")
     private const val MIN_CONFIDENCE = 0.8
-    // Reject when the in-domain VOTE is this confident the clip is NOT a cough. Deliberately conservative
-    // (well below the vote's 90%-recall operating point ≈0.26) so a real cough is very unlikely to be
-    // rejected — AutoReject must never lose data. This is the tunable "specificity" knob (future: expose
-    // it in the gallery as a spinner, per the desktop roadmap).
-    private const val VOTE_REJECT_THRESHOLD = 0.20f
+    private const val PREFS = "app_settings"
+    private const val KEY_THRESHOLD = "reject_sensitivity_threshold"
+    // Reject when the in-domain VOTE is this confident the clip is NOT a cough. Default is deliberately
+    // conservative (well below the vote's 90%-recall operating point ≈0.26) so a real cough is very
+    // unlikely to be rejected — AutoReject must never lose data. User-tunable "specificity" knob, exposed
+    // in the gallery Tools spinner ("Reject sensitivity"), per the desktop roadmap.
+    const val DEFAULT_VOTE_REJECT_THRESHOLD = 0.20f
+
+    /** Current reject threshold — user preference if set, else [DEFAULT_VOTE_REJECT_THRESHOLD]. */
+    fun voteRejectThreshold(ctx: Context): Float =
+        ctx.getSharedPreferences(PREFS, Context.MODE_PRIVATE).getFloat(KEY_THRESHOLD, DEFAULT_VOTE_REJECT_THRESHOLD)
+
+    fun setVoteRejectThreshold(ctx: Context, value: Float) {
+        ctx.getSharedPreferences(PREFS, Context.MODE_PRIVATE).edit().putFloat(KEY_THRESHOLD, value).apply()
+    }
 
     /** [pcm]/[sr] (when available) enable the in-domain [CoughVote]; without them only the codebook
      *  letter rule applies. */
@@ -37,8 +47,9 @@ object AutoReject {
         // PRIMARY: the in-domain VOTE (forest + in-domain HuBERT head + DSP cues), trained on the user's
         // own clips. This supersedes the old ALLDATA cough-head check, which was OUT-OF-DISTRIBUTION for
         // the user's voice (it MISlabelled their voice as cough); the vote's head is trained in-domain.
+        val threshold = voteRejectThreshold(ctx)
         val voteSaysNotCough = if (pcm != null)
-            CoughVote.probability(ctx, pcm, sr, d.emb)?.let { it < VOTE_REJECT_THRESHOLD } ?: false
+            CoughVote.probability(ctx, pcm, sr, d.emb)?.let { it < threshold } ?: false
         else false
         // ORTHOGONAL in-domain signal: the multi-class decoder confidently calling it noise/voice. Also
         // trained on the user's own labelled clips, so it correctly IDs their voice/noise.
