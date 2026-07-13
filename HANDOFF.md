@@ -2,7 +2,28 @@
 
 Read this file first, then continue the work. This captures context that is NOT in the
 codebase or the other .md files — it lives only in the chat session that produced it.
-Date: 2026-06-12 (latest session below; older 2026-06-05 notes follow; jump to 2026-07-11 for the newest).
+Date: 2026-06-12 (latest session below; older 2026-06-05 notes follow; jump to 2026-07-13 for the newest).
+
+## SESSION 2026-07-13 — autonomous resume-paused-work: reject-sensitivity spinner (blue_sky `045bac8`)
+Ran the standing "resume paused work" scheduled task. All three repos (FFTT04D/M/L) were clean and fully
+pushed to origin — nothing was stranded by a crash or resource exhaustion this run. No device was
+connected (`adb devices` empty) and no concurrent Gradle/java process was running.
+Picked up documented follow-up (c) from memory `on-device-cough-vote`: exposed `AutoReject`'s
+`VOTE_REJECT_THRESHOLD` (previously a hardcoded 0.20f) as a user-adjustable setting. `AutoReject.kt` gained
+`voteRejectThreshold(ctx)`/`setVoteRejectThreshold(ctx, v)` (SharedPreferences `app_settings` /
+`reject_sensitivity_threshold`, default unchanged at 0.20f). `GalleryActivity`'s existing pink Tools
+spinner (fixed 110dp width — safe to extend, see the `ad088ec` squeeze-bug lesson) gained a "Reject
+sensitivity (X.XX)" entry opening a 4-preset dialog (Conservative 0.10 / Default 0.20 / Balanced 0.26 ≈ the
+vote's 90%-recall point / Aggressive 0.35, with an inline warning at the aggressive end). Both
+`:app:compileDebugKotlin` and `:app:assembleDebug` green (hit the documented stale-incremental-cache
+gotcha once — `rm -rf app/build/kotlin` fixed it). Build index 151 / letter 'V'. Committed + pushed
+(`045bac8`); local debug APK `FFTT04M_20260713_021500.apk` built per the apk-per-commit policy (gitignored,
+not committed — matches existing convention).
+**NOT device-tested this run** (no phone attached) — the change is additive and low-risk (defaults preserve
+prior AutoReject behavior exactly), but verify the new spinner entry + dialog render correctly on a real
+device before considering it done. Deliberately did NOT touch follow-up (d) (merging the Breath/Snore
+display buckets in `GroundTruthBucket`) — that item is explicitly conditional on user preference, not a
+clear-cut task, so it needs the user's decision first. See memory `on-device-cough-vote` for full detail.
 
 ## SESSION 2026-07-11 — Ground Truth Review device-tested on Pixel 10 (session was interrupted before
 ## updating this file; reconstructed + verified-no-regression in a follow-up review session same day)
