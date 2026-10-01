@@ -815,6 +815,10 @@ class GalleryActivity : AppCompatActivity() {
                 sb.append('\n')
                 sb.append("≈ ").append(decoded.label).append(" (").append(decoded.letter).append("): ")
                     .append(decoded.word.joinToString(" "))
+                decoded.coughScore?.let { cs ->
+                    sb.append('\n').append("cough score ").append(String.format("%+.2f", cs))
+                        .append(if (cs > 0) " → cough" else " → not cough")
+                }
             }
             // Every vote's score (forest / in-domain head / fused), cached in the .phon.
             PhonemeDecoder.votesLine(decoded)?.let { sb.append('\n').append(it) }

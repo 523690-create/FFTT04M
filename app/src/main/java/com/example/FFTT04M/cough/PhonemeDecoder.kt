@@ -101,7 +101,10 @@ object PhonemeDecoder {
                        // can show every vote without recomputing. Null until computed for a clip.
                        val forestP: Float? = null, val headP: Float? = null, val voteP: Float? = null,
                        // True when the clip contains BOTH a cough and a voice span (see MixedClipBreaker).
-                       val mixed: Boolean = false)
+                       val mixed: Boolean = false,
+                       // Continuous cough-vs-not score of the word (see [coughScore]); > 0 ⇒ cough. Display
+                       // only — nothing on-device decides on it yet. Null for .phon files written before it.
+                       val coughScore: Double? = null)
 
     fun decode(ctx: Context, pcm: FloatArray, sr: Int): Decoded? {
         ensureLoaded(ctx)
@@ -138,7 +141,33 @@ object PhonemeDecoder {
         val letter = dom?.key ?: "?"
         // Confidence = the dominant letter's share of the assigned (non-?) windows.
         val confidence = if (nonQ > 0 && dom != null) dom.value.toDouble() / nonQ else 0.0
-        return Decoded(letter, labelByLetter[letter] ?: "?", word, clipEmb, confidence)
+        return Decoded(letter, labelByLetter[letter] ?: "?", word, clipEmb, confidence,
+            coughScore = coughScore(word))
+    }
+
+    private const val RESPIRATORY_LABEL = "snoring"   // the merged breath/snore class
+    private val NOT_COUGH_LABELS = setOf("noise", "voice", "speech", "snoring", "sneeze", "music", "breathing")
+    private const val COUGH_LAMBDA = 0.4
+
+    /** Mirror of the desktop `CoughScore` (FFTT04D, 2026-09-30):
+     *  (cough windows − respiratory windows − λ·other not-cough windows) / all windows, cough when > 0.
+     *  The dominant letter discards clips whose coughs are outnumbered by gaps/voiced tails; on the
+     *  desktop codebook this score lifted held-out coswara cough recall 45.8 → 78.2% at λ=0.4 with
+     *  device accuracy held (87.6 vs 88.1%). NOT validated on this device codebook / fractionation —
+     *  hence display-only until device clips are scored with it. */
+    private fun coughScore(word: List<String>): Double? {
+        if (word.isEmpty()) return null
+        var cough = 0; var resp = 0; var other = 0
+        for (code in word) {
+            if (code == "?") continue
+            val label = labelByLetter[code.takeWhile { it.isLetter() }]
+            when {
+                label == RESPIRATORY_LABEL -> resp++
+                label in NOT_COUGH_LABELS -> other++
+                else -> cough++
+            }
+        }
+        return (cough - resp - COUGH_LAMBDA * other) / word.size
     }
 
     /** HuBERT per-window features: mean-pool the frames falling in each fixed-grid window (768-dim),
@@ -197,6 +226,7 @@ object PhonemeDecoder {
         d.headP?.let { o.put("headP", it.toDouble()) }
         d.voteP?.let { o.put("voteP", it.toDouble()) }
         if (d.mixed) o.put("mixed", true)
+        d.coughScore?.let { o.put("coughScore", it) }
         runCatching { out.writeText(o.toString()) }
     }
 
@@ -214,7 +244,8 @@ object PhonemeDecoder {
                 forestP = if (o.has("forestP")) o.getDouble("forestP").toFloat() else null,
                 headP = if (o.has("headP")) o.getDouble("headP").toFloat() else null,
                 voteP = if (o.has("voteP")) o.getDouble("voteP").toFloat() else null,
-                mixed = o.optBoolean("mixed", false))
+                mixed = o.optBoolean("mixed", false),
+                coughScore = if (o.has("coughScore")) o.getDouble("coughScore") else null)
         } catch (_: Throwable) { null }
     }
 
