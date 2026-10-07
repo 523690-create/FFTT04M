@@ -27,9 +27,14 @@ object AutoReject {
     private const val PREFS = "app_settings"
     private const val KEY_THRESHOLD = "reject_sensitivity_threshold"
     // Reject when the in-domain VOTE is this confident the clip is NOT a cough. Default is deliberately
-    // conservative (well below the vote's 90%-recall operating point ≈0.26) so a real cough is very
-    // unlikely to be rejected — AutoReject must never lose data. User-tunable "specificity" knob, exposed
-    // in the gallery Tools spinner ("Reject sensitivity"), per the desktop roadmap.
+    // conservative (below the vote's 90%-recall operating point) so a real cough is very unlikely to be
+    // rejected — AutoReject must never lose data. User-tunable "specificity" knob, exposed in the gallery
+    // Tools spinner ("Reject sensitivity"), per the desktop roadmap.
+    // Bundled models retrained 2026-10-07 on the user's OWN 1,354 labels only (the 07-12 models had been
+    // trained on text half-written by the auto-matcher — see FFTT04D HANDOFF 2026-10-05). Measured
+    // out-of-fold by `:desktop:deviceCoughGate` (coughs lost / non-coughs rejected): 0.10 → 3.6% / 56%,
+    // 0.20 → 6.6% / 87%, 0.26 → 8.4% / 92%, 0.35 → 9.7% / 94%; the 90%-recall point is ≈0.37.
+    // DSP-only phones (no HuBERT model downloaded): 0.20 → 5.6% / 33%. Not yet device-validated.
     const val DEFAULT_VOTE_REJECT_THRESHOLD = 0.20f
 
     /** Current reject threshold — user preference if set, else [DEFAULT_VOTE_REJECT_THRESHOLD]. */

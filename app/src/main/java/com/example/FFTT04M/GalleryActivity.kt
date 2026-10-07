@@ -326,10 +326,11 @@ class GalleryActivity : AppCompatActivity() {
     private fun showRejectSensitivityDialog() {
         val current = com.example.FFTT04M.cough.AutoReject.voteRejectThreshold(this)
         val presets = listOf(
-            0.10f to "Conservative (0.10) — reject only very confident non-coughs",
-            0.20f to "Default (0.20)",
-            0.26f to "Balanced (0.26) — near the vote's 90%-recall point",
-            0.35f to "Aggressive (0.35) — may reject some real coughs",
+            // Measured 2026-10-07 (desktop :deviceCoughGate, out-of-fold, clean labels): coughs lost / non-coughs rejected
+            0.10f to "Conservative (0.10) — ~4% coughs lost / ~56% non-coughs rejected",
+            0.20f to "Default (0.20) — ~7% / ~87%",
+            0.26f to "Balanced (0.26) — ~8% / ~92%",
+            0.35f to "Aggressive (0.35) — ~10% / ~94%, may reject real coughs",
         )
         val labels = presets.map { it.second }.toTypedArray()
         val checked = presets.indexOfFirst { it.first == current }.let { if (it < 0) 1 else it }
